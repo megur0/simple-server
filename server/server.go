@@ -188,6 +188,7 @@ func StartServer(c context.Context, host string, port int) {
 		l.Info(c, fmt.Sprintf("shutdown received: %v", sig))
 	}
 
+	// シャットダウン処理。タイムアウトを過ぎるとシャットダウン処理がキャンセルされる。
 	ctx, cancel := context.WithTimeout(context.Background(), ShutdownTimeoutSecond)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
