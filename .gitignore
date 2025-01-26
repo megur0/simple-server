@@ -1,0 +1,9 @@
+.env
+.idea
+db.ini
+.DS_Store
+*.log
+tmp/
+
+# vscode
+.vscode/*
