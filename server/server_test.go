@@ -80,7 +80,7 @@ func TestMain(m *testing.M) {
 
 // go test -v -count=1 -timeout 60s -run ^TestServer$ ./server
 func TestServer(t *testing.T) {
-	go StartServer(context.Background(), "0.0.0.0", 8087)
+	go StartServer("0.0.0.0", 8087)
 	time.Sleep(time.Millisecond * 100)
 	defer Shutdown()
 }
