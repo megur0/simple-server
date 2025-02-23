@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -165,7 +166,7 @@ func StartServer(c context.Context, host string, port int) {
 	mux.Handle("/", constructHandlerWithMiddleware(0))
 
 	// サーバー構造体を作成
-	srv := &http.Server{Addr: fmt.Sprintf("%s:%d", host, port), Handler: mux}
+	srv := &http.Server{BaseContext: func(l net.Listener) context.Context { return c }, Addr: fmt.Sprintf("%s:%d", host, port), Handler: mux}
 
 	// ここでgo routineを使うのはmainのスレッドではgraceful shutdownの待機をしておくため。
 	go func() {
@@ -183,9 +184,9 @@ func StartServer(c context.Context, host string, port int) {
 	select {
 	case sig := <-quit:
 		// osからのシグナルで終了
-		l.Info(c, fmt.Sprintf("quit received: %v", sig))
+		l.Info(fmt.Sprintf("quit received: %v", sig))
 	case sig := <-shutdown: // Shutdown関数からチャネル送信してシャットダウン
-		l.Info(c, fmt.Sprintf("shutdown received: %v", sig))
+		l.Info(fmt.Sprintf("shutdown received: %v", sig))
 	}
 
 	// シャットダウン処理。タイムアウトを過ぎるとシャットダウン処理がキャンセルされる。
@@ -196,7 +197,7 @@ func StartServer(c context.Context, host string, port int) {
 		// Error from closing listeners, or context timeout:
 		panic(fmt.Sprintf("Failed to gracefully shutdown:%s", err))
 	}
-	l.Info(c, "Server successfully shutdowned")
+	l.Info("Server successfully shutdowned")
 }
 
 // context.Contextにセットする値の衝突を避けるために独自のキーを使う。
