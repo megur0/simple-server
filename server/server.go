@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -149,7 +150,7 @@ func constructHandlerWithMiddleware(middleWareIdx int) http.Handler {
 	return commonMiddleware[middleWareIdx](constructHandlerWithMiddleware(middleWareIdx + 1))
 }
 
-func StartServer(host string, port int) {
+func StartServer(c context.Context, host string, port int) {
 	// マルチプレクサ（ルーティング情報）を作成してハンドラーを紐付けている。
 	// ※ 作成せずにグローバルなマルチプレクサを使っても別に良かった。
 	//
@@ -165,7 +166,7 @@ func StartServer(host string, port int) {
 	mux.Handle("/", constructHandlerWithMiddleware(0))
 
 	// サーバー構造体を作成
-	srv := &http.Server{Addr: fmt.Sprintf("%s:%d", host, port), Handler: mux}
+	srv := &http.Server{BaseContext: func(l net.Listener) context.Context { return c }, Addr: fmt.Sprintf("%s:%d", host, port), Handler: mux}
 
 	// ここでgo routineを使うのはmainのスレッドではgraceful shutdownの待機をしておくため。
 	go func() {
