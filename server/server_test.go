@@ -366,10 +366,10 @@ func TestRootHandler(t *testing.T) {
 
 // go test -v -count=1 -timeout 60s -run ^TestLog$ ./server
 func TestLog(t *testing.T) {
-	l.Debug(context.Background(), "test %s", "test")
-	l.Info(context.Background(), "test %s", "test")
-	l.Warn(context.Background(), "test %s", "test")
-	l.Error(context.Background(), "test %s", "test")
+	l.Debug(context.Background(), "test", "test2")
+	l.Info(context.Background(), "test", "test2")
+	l.Warn(context.Background(), "test", "test2")
+	l.Error(context.Background(), "test", "test2")
 	SetLogger(l)
 }
 
