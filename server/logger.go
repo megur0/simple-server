@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"log"
 )
 
@@ -13,26 +14,26 @@ func SetLogger(lg Logger) {
 }
 
 type Logger interface {
-	Info(args ...any)
-	Debug(args ...any)
-	Warn(args ...any)
-	Error(args ...any)
+	Debug(c context.Context, message string, args ...any)
+	Info(c context.Context, message string, args ...any)
+	Warn(c context.Context, message string, args ...any)
+	Error(c context.Context, message string, args ...any)
 }
 
 type defaultLogger struct{}
 
-func (l *defaultLogger) Info(args ...any) {
-	log.Print(append([]any{"[INFO]"}, args...)...)
+func (l *defaultLogger) Info(c context.Context, message string, args ...any) {
+	log.Print("[INFO]"+message, args)
 }
 
-func (l *defaultLogger) Debug(args ...any) {
-	log.Print(append([]any{"[DEBUG]"}, args...)...)
+func (l *defaultLogger) Debug(c context.Context, message string, args ...any) {
+	log.Print("[DEBUG]"+message, args)
 }
 
-func (l *defaultLogger) Warn(args ...any) {
-	log.Print(append([]any{"[WARN]"}, args...)...)
+func (l *defaultLogger) Warn(c context.Context, message string, args ...any) {
+	log.Print("[Warn]"+message, args)
 }
 
-func (l *defaultLogger) Error(args ...any) {
-	log.Print(append([]any{"[ERROR]"}, args...)...)
+func (l *defaultLogger) Error(c context.Context, message string, args ...any) {
+	log.Print("[Error]"+message, args)
 }
