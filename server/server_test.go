@@ -396,8 +396,18 @@ func TestSetStrToStructField(t *testing.T) {
 		},
 		{
 			v:     reflect.ValueOf(ptr("")).Elem(),
-			str:   `"test"`, // 「"」を付ける必要がある点に注意したし。
+			str:   `"test"`,
 			check: func(t *testing.T, rv reflect.Value) { testutil.AssertEqual(t, rv.Interface().(string), "test") },
+		},
+		{
+			v:     reflect.ValueOf(ptr("")).Elem(),
+			str:   `5`,
+			check: func(t *testing.T, rv reflect.Value) { testutil.AssertEqual(t, rv.Interface().(string), "5") },
+		},
+		{
+			v:     reflect.ValueOf(ptr(ptr(""))).Elem(),
+			str:   `5`,
+			check: func(t *testing.T, rv reflect.Value) { testutil.AssertEqual(t, *rv.Interface().(*string), "5") },
 		},
 		{
 			v:   reflect.ValueOf(&time.Time{}).Elem(),
@@ -428,7 +438,7 @@ func TestSetStrToStructField(t *testing.T) {
 			},
 		},
 	} {
-		t.Run("success", func(t *testing.T) {
+		t.Run("success for "+v.str, func(t *testing.T) {
 			if err := setStrToStructField(v.v, v.str); err != nil {
 				t.Fatal("unexpected result:", err)
 			}
@@ -440,14 +450,6 @@ func TestSetStrToStructField(t *testing.T) {
 		v   reflect.Value
 		str string
 	}{
-		{
-			v:   reflect.ValueOf(ptr("")).Elem(),
-			str: `5`,
-		},
-		{
-			v:   reflect.ValueOf(ptr(ptr(""))).Elem(),
-			str: `5`,
-		},
 		{
 			v:   reflect.ValueOf(ptr(0)).Elem(),
 			str: `"test"`,
@@ -473,7 +475,7 @@ func TestSetStrToStructField(t *testing.T) {
 			str: "2006",
 		},
 	} {
-		t.Run("failed", func(t *testing.T) {
+		t.Run("failed for "+v.str, func(t *testing.T) {
 			if err := setStrToStructField(v.v, v.str); err == nil {
 				t.Error("should be error")
 			}

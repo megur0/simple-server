@@ -60,11 +60,8 @@ var (
 	// ルーティング情報を格納する
 	router = map[string]route{}
 
-	// すべてのハンドラの前に実行されるミドルウェアを登録する
-	// 先頭から順に実行されていく
 	commonMiddleware = []Middleware{}
 
-	// 個々のミドルウェアを実行した後に実行されるミドルウェアを登録する
 	commonAfterMiddleware = []Middleware{}
 
 	// ルートが無いときに返すレスポンス
@@ -111,10 +108,17 @@ func Post(path string, hr Handler, middleware ...Middleware) {
 	setHandler(path, hr, http.MethodPost, middleware...)
 }
 
+// 共通のミドルウェア
+// すべてのハンドラの前に実行されるミドルウェア
+// 先頭から順に実行されていく
 func SetCommonMiddleware(m ...Middleware) {
 	commonMiddleware = m
 }
 
+// 共通の後続ミドルウェア
+// 個別のミドルウェアの後に実行されるミドルウェアを登録する
+// 共通のミドルウェア -> 個々のミドルウェア -> 共通の後続ミドルウェア -> ハンドラ処理
+// 先頭から順に実行されていく
 func SetCommonAfterMiddleware(m ...Middleware) {
 	commonAfterMiddleware = m
 }
@@ -402,7 +406,6 @@ func Bind[S any](r *http.Request, body string, s *S) error {
 }
 
 // structの各要素へURLのクエリやパスパラメータから取得したstringをセットする用途。
-// Jsonと同じように文字列は""で囲んでおかないとパースエラーが発生する。
 func setStrToStructField(rv reflect.Value, str string) error {
 	if !rv.CanSet() {
 		panic("should only use canset value")
@@ -414,14 +417,24 @@ func setStrToStructField(rv reflect.Value, str string) error {
 	switch rv.Interface().(type) {
 	case string:
 		var s string
-		err := json.Unmarshal([]byte(str), &s)
+		b := []byte(str)
+		// 文字列がダブルクォートで囲まれていないとjson.Unmarshalでエラーとなるため、
+		// ここでダブルクォートで囲む。
+		if !strings.HasPrefix(str, `"`) || !strings.HasSuffix(str, `"`) {
+			b = []byte(`"` + str + `"`)
+		} 
+		err := json.Unmarshal(b, &s)
 		if err != nil {
 			return err
 		}
 		rv.SetString(s)
 	case *string:
 		var s string
-		err := json.Unmarshal([]byte(str), &s)
+		b := []byte(str)
+		if !strings.HasPrefix(str, `"`) || !strings.HasSuffix(str, `"`) {
+			b = []byte(`"` + str + `"`)
+		} 
+		err := json.Unmarshal(b, &s)
 		if err != nil {
 			return err
 		}
