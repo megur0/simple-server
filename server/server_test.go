@@ -34,47 +34,6 @@ func TestMain(m *testing.M) {
 
 	SetNoMethodResponse(createResponse(false, errorDataResponse{Message: "no method"}))
 
-	SetCommonMiddleware(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-			if r.Header.Get("Content-Type") != "application/json" {
-				SetResponse(w, r, http.StatusBadRequest, &struct {
-					Result bool `json:"is_success"`
-					Data   struct {
-						Message string `json:"message"`
-					} `json:"data"`
-				}{
-					Result: false,
-					Data: struct {
-						Message string `json:"message"`
-					}{
-						Message: "content type is not application/jsonr",
-					},
-				})
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	})
-
-	SetCommonAfterMiddleware(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-			value := getContextVal(r, "data-setted-by-middleware")
-
-			// after middlewareがあとから呼ばれたことを検査できるように、上書きしておく
-			if value != nil {
-				ctx := context.WithValue(r.Context(), contextKey{Key: "data-setted-by-middleware"}, value.(string)+" overrided by after middleware")
-				r = r.WithContext(ctx)
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	})
-
-	SetInternalServerErrorJsonResponse(createResponse(false, errorDataResponse{Message: "something error"}))
-
 	m.Run()
 }
 
@@ -87,12 +46,15 @@ func TestServer(t *testing.T) {
 
 // go test -v -count=1 -timeout 60s -run ^TestInternalServerError$ ./server
 func TestInternalServerError(t *testing.T) {
+	errorResponse := createResponse(false, errorDataResponse{Message: "something error"})
+	SetInternalServerErrorJsonResponse(errorResponse)
+
 	Get("/panic", func(w http.ResponseWriter, r *http.Request) {
 		handle(w, r, nil, (*emptyDataResponse)(nil), http.StatusOK, func(req *addCommentRequest) (any, error) {
 			panic("")
 		})
 	})
-	execRequest(t, "fail", http.MethodGet, "/panic", nil, nil, http.StatusInternalServerError, &internalServerErrorJsonResponse)
+	execRequest(t, "fail", http.MethodGet, "/panic", nil, nil, http.StatusInternalServerError, errorResponse)
 }
 
 // go test -v -count=1 -timeout 60s -run ^TestMiddlewareError$
@@ -111,7 +73,7 @@ func TestMiddlewareError(t *testing.T) {
 
 // go test -v -count=1 -timeout 60s -run ^TestSameRoute$ ./server
 func TestSameRoute(t *testing.T) {
-	var r interface{}
+	var r any
 	defer func() {
 		if r = recover(); r == nil {
 			t.Fatalf("should get panic")
@@ -130,8 +92,85 @@ func TestSameRoute(t *testing.T) {
 	})
 }
 
-// go test -v -count=1 -timeout 60s -run ^TestRootHandler$ ./server
-func TestRootHandler(t *testing.T) {
+// go test -v -count=1 -timeout 60s -run ^TestMiddlewareOrder$ ./server
+func TestMiddlewareOrder(t *testing.T) {
+	var middlewareExecutionOrder []string
+
+	commonMiddleware1 := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			middlewareExecutionOrder = append(middlewareExecutionOrder, "commonMiddleware1")
+			next.ServeHTTP(w, r)
+		})
+	}
+
+	commonMiddleware2 := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			middlewareExecutionOrder = append(middlewareExecutionOrder, "commonMiddleware2")
+			next.ServeHTTP(w, r)
+		})
+	}
+
+	SetCommonMiddleware(commonMiddleware1, commonMiddleware2)
+
+	commonAfterMiddleware1 := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			middlewareExecutionOrder = append(middlewareExecutionOrder, "commonAfterMiddleware1")
+			next.ServeHTTP(w, r)
+		})
+	}
+
+	commonAfterMiddleware2 := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			middlewareExecutionOrder = append(middlewareExecutionOrder, "commonAfterMiddleware2")
+			next.ServeHTTP(w, r)
+		})
+	}
+
+	SetCommonAfterMiddleware(commonAfterMiddleware1, commonAfterMiddleware2)
+
+	// Middleware 1
+	middleware1 := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			middlewareExecutionOrder = append(middlewareExecutionOrder, "middleware1")
+			next.ServeHTTP(w, r)
+		})
+	}
+
+	// Middleware 2
+	middleware2 := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			middlewareExecutionOrder = append(middlewareExecutionOrder, "middleware2")
+			next.ServeHTTP(w, r)
+		})
+	}
+
+	// Middleware 3
+	middleware3 := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			middlewareExecutionOrder = append(middlewareExecutionOrder, "middleware3")
+			next.ServeHTTP(w, r)
+		})
+	}
+
+	Get("/middleware-order-test", func(w http.ResponseWriter, r *http.Request) {
+		handle(w, r, nil, (*emptyDataResponse)(nil), http.StatusOK, func(req *any) (any, error) {
+			return nil, nil
+		})
+	}, middleware1, middleware2, middleware3)
+
+	execRequest(t, "middleware_order_test", http.MethodGet, "/middleware-order-test", nil, nil, http.StatusOK, &response{
+		IsSuccess: true,
+		Data:      nil,
+	})
+
+	expectedOrder := []string{"commonMiddleware1", "commonMiddleware2", "middleware1", "middleware2", "middleware3", "commonAfterMiddleware1", "commonAfterMiddleware2"}
+	if !reflect.DeepEqual(middlewareExecutionOrder, expectedOrder) {
+		t.Fatalf("unexpected middleware execution order: got %v, want %v", middlewareExecutionOrder, expectedOrder)
+	}
+}
+
+// go test -v -count=1 -timeout 60s -run ^TestHandler$ ./server
+func TestHandler(t *testing.T) {
 	Get("/self", func(w http.ResponseWriter, r *http.Request) {
 		handle(w, r, nil, &getUserResponse{}, http.StatusOK, func(req *any) (*user, error) {
 			user := getContextVal(r, "user").(*user)
@@ -144,22 +183,6 @@ func TestRootHandler(t *testing.T) {
 
 			ctx := context.WithValue(r.Context(), contextKey{Key: "user"}, &user{})
 			ctx = context.WithValue(ctx, contextKey{Key: "uid"}, "test uid")
-			r = r.WithContext(ctx)
-			h.ServeHTTP(w, r)
-		})
-	})
-
-	Get("/using-after-middleware", func(w http.ResponseWriter, r *http.Request) {
-		handle(w, r, nil, &getUserResponse{}, http.StatusOK, func(req *any) (*user, error) {
-			value := getContextVal(r, "data-setted-by-middleware").(string)
-			return &user{
-				ID:   "",
-				Name: value,
-			}, nil
-		})
-	}, func(h http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := context.WithValue(r.Context(), contextKey{Key: "data-setted-by-middleware"}, "name")
 			r = r.WithContext(ctx)
 			h.ServeHTTP(w, r)
 		})
@@ -214,15 +237,6 @@ func TestRootHandler(t *testing.T) {
 	execRequest(t, "success_get_request", http.MethodGet, "/self", nil, nil, http.StatusOK, &response{
 		IsSuccess: true,
 		Data:      getUserResponse{},
-	})
-
-	execRequest(t, "check_after_middleware", http.MethodGet, "/using-after-middleware", nil, nil, http.StatusOK, &response{
-		IsSuccess: true,
-		Data: getUserResponse{
-			User: user{
-				Name: "name overrided by after middleware",
-			},
-		},
 	})
 
 	execRequest(t, "failed_not_exist_method", http.MethodPost, "/self", nil, nil, http.StatusNotFound, &response{
@@ -483,6 +497,24 @@ func TestSetStrToStructField(t *testing.T) {
 	}
 }
 
+// go test -v -count=1 -timeout 60s -run ^TestHTMLResponse$ ./server
+func TestHTMLResponse(t *testing.T) {
+	htmlContent := "<html><body><h1>Hello, World!</h1></body></html>"
+
+	Get("/html", func(w http.ResponseWriter, r *http.Request) {
+		SetResponse(w, r, "text/html; charset=utf-8", http.StatusOK, []byte(htmlContent))
+	})
+
+	req, _ := http.NewRequest(http.MethodGet, "/html", nil)
+	res := httptest.NewRecorder()
+	constructHandlerWithMiddleware(0).ServeHTTP(res, req)
+
+	t.Run("", func(t *testing.T) {
+		testutil.AssertEqual(t, res.Body.String(), htmlContent)
+		testutil.AssertEqual(t, res.Result().StatusCode, http.StatusOK)
+	})
+}
+
 func execRequest[S any](t *testing.T, testName string, method string, path string, body io.Reader, query map[string]string, statusCode int, expect *S, ignoreField ...string) {
 	t.Helper()
 	req, _ := http.NewRequest(method, path, body)
@@ -507,7 +539,6 @@ func execRequest[S any](t *testing.T, testName string, method string, path strin
 }
 
 func handle[REQ, DATA any, RES responseHasSet[DATA]](w http.ResponseWriter, r *http.Request, request *REQ, res RES, successStatusCode int, logic func(*REQ) (DATA, error)) {
-	// 注意: ストリームを一度リードすると、その後はr.Bodyから読み取りをしても取得できない。
 	var body string
 	if r.Body != nil {
 		buf := new(bytes.Buffer)
@@ -519,7 +550,7 @@ func handle[REQ, DATA any, RES responseHasSet[DATA]](w http.ResponseWriter, r *h
 	if request != nil {
 		//logger.DV(request)
 		if err := Bind(r, body, request); err != nil {
-			SetResponse(w, r, http.StatusBadRequest, createResponse(false, errorDataResponse{
+			SetResponseAsJson(w, r, http.StatusBadRequest, createResponse(false, errorDataResponse{
 				Message: err.Error(),
 			}))
 			return
@@ -530,13 +561,13 @@ func handle[REQ, DATA any, RES responseHasSet[DATA]](w http.ResponseWriter, r *h
 	data, err := logic(request)
 
 	if err != nil {
-		SetResponse(w, r, http.StatusInternalServerError, createResponse(false, nil))
+		SetResponseAsJson(w, r, http.StatusInternalServerError, createResponse(false, nil))
 		return
 	}
 
 	// 結果を設定して返す
 	res.Set(data)
-	SetResponse(w, r, successStatusCode, createResponse(true, res))
+	SetResponseAsJson(w, r, successStatusCode, createResponse(true, res))
 }
 
 type responseHasSet[U any] interface {

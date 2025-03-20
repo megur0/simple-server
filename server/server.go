@@ -66,30 +66,16 @@ var (
 
 	// ルートが無いときに返すレスポンス
 	noMethodResponse any = struct {
-		IsSuccess bool `json:"is_success"`
-		Data      any  `json:"data"`
+		Message string `json:"message"`
 	}{
-		IsSuccess: false,
-		Data: struct {
-			Message string `json:"message"`
-		}{
-			Message: "no method",
-		},
+		Message: "no method",
 	}
 
 	// 500エラーの際に返すレスポンス
 	internalServerErrorJsonResponse any = struct {
-		Result bool `json:"is_success"`
-		Data   struct {
-			Message string `json:"message"`
-		} `json:"data"`
+		Message string `json:"message"`
 	}{
-		Result: false,
-		Data: struct {
-			Message string `json:"message"`
-		}{
-			Message: "something error",
-		},
+		Message: "internal server error",
 	}
 
 	// Graceful shutdown時にタイムアウトとして設定する秒数
@@ -131,11 +117,14 @@ func SetInternalServerErrorJsonResponse(res any) {
 	internalServerErrorJsonResponse = res
 }
 
-func SetResponse(w http.ResponseWriter, r *http.Request, statusCode int, data any) {
-	w.Header().Set("Content-Type", "application/json")
-	// [注意] headerのSetは、WriteHeader関数の前に呼ぶ必要がある。
+// "application/json"としてレスポンスを返す
+// dataはjson.Marshalで変換可能な型である必要がある。
+// そうでない場合はpanicになる。
+func SetResponseAsJson(w http.ResponseWriter, r *http.Request, statusCode int, data any) {
+	// headerのSetは、WriteHeader関数の前に呼ぶ必要がある。
 	// 後に呼んでも変更が発生しない。
 	// https://pkg.go.dev/net/http#ResponseWriter
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 
 	jsn, err := json.Marshal(data)
@@ -144,6 +133,12 @@ func SetResponse(w http.ResponseWriter, r *http.Request, statusCode int, data an
 	}
 
 	w.Write(jsn)
+}
+
+func SetResponse(w http.ResponseWriter, r *http.Request, contentType string, statusCode int, data []byte) {
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(statusCode)
+	w.Write(data)
 }
 
 func constructHandlerWithMiddleware(middleWareIdx int) http.Handler {
@@ -180,7 +175,7 @@ func StartServer(c context.Context, host string, port int) {
 	}()
 
 	// シャットダウンの信号待機
-	shutdown = make(chan interface{}, 1)
+	shutdown = make(chan any, 1)
 	defer close(shutdown) // ここでcloseしないと本ファイルのShutdown関数が待ち続けてしまう。
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGTERM, os.Interrupt)
@@ -227,7 +222,7 @@ func finalHandler(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if rv := recover(); rv != nil {
 			l.Error(r.Context(), fmt.Sprintf("panic: %v\n\n", rv)+string(debug.Stack()))
-			SetResponse(w, r, http.StatusInternalServerError, &internalServerErrorJsonResponse)
+			SetResponseAsJson(w, r, http.StatusInternalServerError, &internalServerErrorJsonResponse)
 			return
 		}
 	}()
@@ -260,7 +255,7 @@ func finalHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// pathに対応するルートが無ければno method
-	SetResponse(w, r, http.StatusNotFound, &noMethodResponse)
+	SetResponseAsJson(w, r, http.StatusNotFound, &noMethodResponse)
 }
 
 func constructHandler(middleWareIdx int, ru *route) http.Handler {
@@ -277,7 +272,7 @@ func constructHandler(middleWareIdx int, ru *route) http.Handler {
 
 // テスト用
 // shutdownチャネルはShutdown関数の方で利用するために入れている。
-var shutdown chan interface{}
+var shutdown chan any
 
 // テスト用。
 // shutdownチャネルに送信され、
@@ -422,7 +417,7 @@ func setStrToStructField(rv reflect.Value, str string) error {
 		// ここでダブルクォートで囲む。
 		if !strings.HasPrefix(str, `"`) || !strings.HasSuffix(str, `"`) {
 			b = []byte(`"` + str + `"`)
-		} 
+		}
 		err := json.Unmarshal(b, &s)
 		if err != nil {
 			return err
@@ -433,7 +428,7 @@ func setStrToStructField(rv reflect.Value, str string) error {
 		b := []byte(str)
 		if !strings.HasPrefix(str, `"`) || !strings.HasSuffix(str, `"`) {
 			b = []byte(`"` + str + `"`)
-		} 
+		}
 		err := json.Unmarshal(b, &s)
 		if err != nil {
 			return err
