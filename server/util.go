@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"reflect"
 )
 
@@ -25,4 +27,13 @@ func toJsonString(from any) string {
 		panic(err)
 	}
 	return string(jsn)
+}
+
+func IoReaderToString(ir io.Reader) string {
+	if ir == nil {
+		return ""
+	}
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(ir)
+	return buf.String()
 }

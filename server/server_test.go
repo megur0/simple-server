@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -101,19 +100,34 @@ func TestInternalServerErrorOnCommonMiddleware(t *testing.T) {
 	execRequest(t, "fail", http.MethodGet, "/panic", nil, nil, http.StatusInternalServerError, errorResponse)
 }
 
-// go test -v -count=1 -timeout 60s -run ^TestMiddlewareError$
-/*
-func TestMiddlewareError(t *testing.T) {
-	Get("/middlewareError", func(w http.ResponseWriter, r *http.Request) {
-		handle(w, r, nil, (*emptyDataResponse)(nil), http.StatusOK, func(req *any) (any, error) {
-			return nil, errors.New("dummy error")
-		})
-	}, func(w http.ResponseWriter, r *http.Request) {
-		SetResponse(ctx, sctx, http.StatusInternalServerError, &internalServerErrorJsonResponse)
-		return errors.New("middleware error")
+// Bindした後もBodyが読み込めることを確認
+// go test -v -count=1 -timeout 60s -run ^TestRequestBodyReadableAfterBind$ ./server
+func TestRequestBodyReadableAfterBind(t *testing.T) {
+	resetSetting()
+
+	type testRequest struct {
+		Field string `json:"field"`
+	}
+
+	Get("/read-body", func(w http.ResponseWriter, r *http.Request) {
+		var req testRequest
+		if err := Bind(r, &req); err != nil {
+			SetResponseAsJson(w, r, http.StatusBadRequest, createResponse(false, errorDataResponse{
+				Message: err.Error(),
+			}))
+			return
+		}
+
+		body := IoReaderToString(r.Body)
+		SetResponseAsJson(w, r, http.StatusOK, createResponse(true, body))
 	})
-	execRequest(t, "fail", http.MethodGet, "/middlewareError", nil, nil, http.StatusInternalServerError, &internalServerErrorJsonResponse)
-}*/
+
+	requestBody := `{"field":"test value"}`
+	execRequest(t, "read_body_after_bind", http.MethodGet, "/read-body", stringToIoReader(requestBody), nil, http.StatusOK, &response{
+		IsSuccess: true,
+		Data:      requestBody,
+	})
+}
 
 // go test -v -count=1 -timeout 60s -run ^TestSameRoute$ ./server
 func TestSameRoute(t *testing.T) {
@@ -587,17 +601,10 @@ func execRequest[S any](t *testing.T, testName string, method string, path strin
 }
 
 func handle[REQ, DATA any, RES responseHasSet[DATA]](w http.ResponseWriter, r *http.Request, request *REQ, res RES, successStatusCode int, logic func(*REQ) (DATA, error)) {
-	var body string
-	if r.Body != nil {
-		buf := new(bytes.Buffer)
-		buf.ReadFrom(r.Body)
-		body = buf.String()
-	}
-
 	// Bind・バリデーション
 	if request != nil {
 		//logger.DV(request)
-		if err := Bind(r, body, request); err != nil {
+		if err := Bind(r, request); err != nil {
 			SetResponseAsJson(w, r, http.StatusBadRequest, createResponse(false, errorDataResponse{
 				Message: err.Error(),
 			}))

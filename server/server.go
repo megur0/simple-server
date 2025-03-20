@@ -1,10 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -150,7 +152,7 @@ func SetResponse(w http.ResponseWriter, r *http.Request, contentType string, sta
 // 本関数で起動されたサーバーのルーティングには設定されないため注意。
 func StartServer(c context.Context, host string, port int) {
 	// マルチプレクサ（ルーティング情報）を作成してハンドラーを紐付けている。
-	// ※ 作成せずにグローバルなマルチプレクサを使っても別に良かった。
+	// ※ 作成せずにグローバルなマルチプレクサを使っても別に良かったかもしれない。
 	//
 	// 各パスごとにHandle関数でハンドラを設定するのではなく、
 	// ルート（"/"）に対して、ルートとなるハンドラ（finalHandler）を設定している。
@@ -159,7 +161,7 @@ func StartServer(c context.Context, host string, port int) {
 	// パスごとにHandle関数でハンドラを設定する方法（※）を採用していないのは、
 	// 上記の方がコードを簡潔に書けそうだったため。
 	// また、無効なパスも一旦はすべてハンドリングする構成にしたかったため。
-	// （ ※ mux.Handle("/aaa") mux.Handle("/bbb") ・・・といった感じ。）
+	// （ ※ mux.Handle("/aaa") mux.Handle("/bbb") ... といった具合。）
 	mux := http.NewServeMux()
 	mux.Handle("/", http.HandlerFunc(finalHandler))
 
@@ -332,12 +334,16 @@ func wrapByErrBind(err error) *ErrBind {
 //
 // 本関数は値のバインドのみを行い、必須フィールドのチェックは含まれない。
 // したがって値が空の場合は何もしない。（何もしないので構造体はデフォルト値のままになる）
-func Bind[S any](r *http.Request, body string, s *S) error {
+func Bind[S any](r *http.Request, s *S) error {
 	rv := reflect.ValueOf(s).Elem()
 	rt := rv.Type()
 	if rt.Kind() != reflect.Struct {
 		panic("bind arg must be pointer to struct")
 	}
+
+	body := IoReaderToString(r.Body)
+	// 後続で再度読み取りできるように再度書き込む
+	r.Body = io.NopCloser(bytes.NewBuffer([]byte(body)))
 
 	// リクエストボディ -> 構造体へのbind
 	if body != "" {
