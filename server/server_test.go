@@ -32,13 +32,19 @@ func TestMain(m *testing.M) {
 	// タイムゾーン初期化
 	InitTimezone()
 
-	SetNoMethodResponse(createResponse(false, errorDataResponse{Message: "no method"}))
-
 	m.Run()
+}
+
+func resetSetting() {
+	SetNoMethodResponse(createResponse(false, errorDataResponse{Message: "no method"}))
+	SetCommonAfterMiddleware()
+	SetCommonMiddleware()
+	router = map[string]route{}
 }
 
 // go test -v -count=1 -timeout 60s -run ^TestServer$ ./server
 func TestServer(t *testing.T) {
+	resetSetting()
 	go StartServer(context.Background(), "0.0.0.0", 8087)
 	time.Sleep(time.Millisecond * 100)
 	defer Shutdown()
@@ -46,6 +52,7 @@ func TestServer(t *testing.T) {
 
 // go test -v -count=1 -timeout 60s -run ^TestInternalServerError$ ./server
 func TestInternalServerError(t *testing.T) {
+	resetSetting()
 	errorResponse := createResponse(false, errorDataResponse{Message: "something error"})
 	SetInternalServerErrorJsonResponse(errorResponse)
 
@@ -53,6 +60,43 @@ func TestInternalServerError(t *testing.T) {
 		handle(w, r, nil, (*emptyDataResponse)(nil), http.StatusOK, func(req *addCommentRequest) (any, error) {
 			panic("")
 		})
+	})
+	execRequest(t, "fail", http.MethodGet, "/panic", nil, nil, http.StatusInternalServerError, errorResponse)
+}
+
+// go test -v -count=1 -timeout 60s -run ^TestInternalServerErrorOnMiddleware$ ./server
+func TestInternalServerErrorOnMiddleware(t *testing.T) {
+	resetSetting()
+	errorResponse := createResponse(false, errorDataResponse{Message: "something error"})
+	SetInternalServerErrorJsonResponse(errorResponse)
+
+	middleware := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			panic("")
+		})
+	}
+
+	Get("/panic", func(w http.ResponseWriter, r *http.Request) {
+		SetResponseAsJson(w, r, http.StatusOK, "dummy")
+	}, middleware)
+	execRequest(t, "fail", http.MethodGet, "/panic", nil, nil, http.StatusInternalServerError, errorResponse)
+}
+
+// go test -v -count=1 -timeout 60s -run ^TestInternalServerErrorOnCommonMiddleware$ ./server
+func TestInternalServerErrorOnCommonMiddleware(t *testing.T) {
+	resetSetting()
+	errorResponse := createResponse(false, errorDataResponse{Message: "something error"})
+	SetInternalServerErrorJsonResponse(errorResponse)
+
+	commonMiddleware1 := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			panic("")
+		})
+	}
+	SetCommonMiddleware(commonMiddleware1)
+
+	Get("/panic", func(w http.ResponseWriter, r *http.Request) {
+		SetResponseAsJson(w, r, http.StatusOK, "dummy")
 	})
 	execRequest(t, "fail", http.MethodGet, "/panic", nil, nil, http.StatusInternalServerError, errorResponse)
 }
@@ -73,6 +117,7 @@ func TestMiddlewareError(t *testing.T) {
 
 // go test -v -count=1 -timeout 60s -run ^TestSameRoute$ ./server
 func TestSameRoute(t *testing.T) {
+	resetSetting()
 	var r any
 	defer func() {
 		if r = recover(); r == nil {
@@ -94,6 +139,7 @@ func TestSameRoute(t *testing.T) {
 
 // go test -v -count=1 -timeout 60s -run ^TestMiddlewareOrder$ ./server
 func TestMiddlewareOrder(t *testing.T) {
+	resetSetting()
 	var middlewareExecutionOrder []string
 
 	commonMiddleware1 := func(next http.Handler) http.Handler {
@@ -171,6 +217,7 @@ func TestMiddlewareOrder(t *testing.T) {
 
 // go test -v -count=1 -timeout 60s -run ^TestHandler$ ./server
 func TestHandler(t *testing.T) {
+	resetSetting()
 	Get("/self", func(w http.ResponseWriter, r *http.Request) {
 		handle(w, r, nil, &getUserResponse{}, http.StatusOK, func(req *any) (*user, error) {
 			user := getContextVal(r, "user").(*user)
@@ -499,6 +546,7 @@ func TestSetStrToStructField(t *testing.T) {
 
 // go test -v -count=1 -timeout 60s -run ^TestHTMLResponse$ ./server
 func TestHTMLResponse(t *testing.T) {
+	resetSetting()
 	htmlContent := "<html><body><h1>Hello, World!</h1></body></html>"
 
 	Get("/html", func(w http.ResponseWriter, r *http.Request) {
@@ -507,7 +555,7 @@ func TestHTMLResponse(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodGet, "/html", nil)
 	res := httptest.NewRecorder()
-	constructHandlerWithMiddleware(0).ServeHTTP(res, req)
+	http.HandlerFunc(finalHandler).ServeHTTP(res, req)
 
 	t.Run("", func(t *testing.T) {
 		testutil.AssertEqual(t, res.Body.String(), htmlContent)
@@ -529,7 +577,7 @@ func execRequest[S any](t *testing.T, testName string, method string, path strin
 
 	res := httptest.NewRecorder()
 
-	constructHandlerWithMiddleware(0).ServeHTTP(res, req)
+	http.HandlerFunc(finalHandler).ServeHTTP(res, req)
 
 	expectJson := toJsonString(expect)
 	t.Run(testName, func(t *testing.T) {

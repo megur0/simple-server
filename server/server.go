@@ -36,7 +36,7 @@ type Handler func(http.ResponseWriter, *http.Request)
 
 type Middleware func(h http.Handler) http.Handler
 
-// リクエストパスをパースして取得したパスパラメータを格納する用
+// リクエストパスをパースして取得したパスパラメータを格納するためのテーブル
 // キーはパラメータ名、バリューがパラメータの値
 type pathParamTable map[string]string
 
@@ -141,13 +141,13 @@ func SetResponse(w http.ResponseWriter, r *http.Request, contentType string, sta
 	w.Write(data)
 }
 
-func constructHandlerWithMiddleware(middleWareIdx int) http.Handler {
-	if middleWareIdx > len(commonMiddleware)-1 {
-		return http.HandlerFunc(finalHandler)
-	}
-	return commonMiddleware[middleWareIdx](constructHandlerWithMiddleware(middleWareIdx + 1))
-}
-
+// サーバーを起動する
+// この関数を実行する前に、各ハンドラの設定を行う必要がある。
+// シャットダウンはGraceful shutdownとなる。
+//
+// デフォルトのマルチプレクサ（DefaultServeMux）を利用していないため、
+// 本パッケージのAPIとは別でhttp.HandleFunc("/some", /*...*/)などでルートを設定しても、
+// 本関数で起動されたサーバーのルーティングには設定されないため注意。
 func StartServer(c context.Context, host string, port int) {
 	// マルチプレクサ（ルーティング情報）を作成してハンドラーを紐付けている。
 	// ※ 作成せずにグローバルなマルチプレクサを使っても別に良かった。
@@ -161,7 +161,7 @@ func StartServer(c context.Context, host string, port int) {
 	// また、無効なパスも一旦はすべてハンドリングする構成にしたかったため。
 	// （ ※ mux.Handle("/aaa") mux.Handle("/bbb") ・・・といった感じ。）
 	mux := http.NewServeMux()
-	mux.Handle("/", constructHandlerWithMiddleware(0))
+	mux.Handle("/", http.HandlerFunc(finalHandler))
 
 	// サーバー構造体を作成
 	srv := &http.Server{Addr: fmt.Sprintf("%s:%d", host, port), Handler: mux}
@@ -258,16 +258,25 @@ func finalHandler(w http.ResponseWriter, r *http.Request) {
 	SetResponseAsJson(w, r, http.StatusNotFound, &noMethodResponse)
 }
 
-func constructHandler(middleWareIdx int, ru *route) http.Handler {
-	if middleWareIdx <= len(ru.middleware)-1 {
-		return ru.middleware[middleWareIdx](constructHandler(middleWareIdx+1, ru))
-	} else if middleWareIdx-len(ru.middleware) <= len(commonAfterMiddleware)-1 {
-		return commonAfterMiddleware[middleWareIdx-len(ru.middleware)](constructHandler(middleWareIdx+1, ru))
-	} else {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ru.handler(w, r)
-		})
+// commonMiddleware -> 個別のミドルウェア（ru.middleware） -> commonAfterMiddleware -> ハンドラ処理
+// という順番で実行されるハンドラを構築する。
+func constructHandler(idx int, ru *route) http.Handler {
+	commonMiddlewareIdx := idx
+	if commonMiddlewareIdx <= len(commonMiddleware)-1 {
+		return commonMiddleware[commonMiddlewareIdx](constructHandler(idx+1, ru))
 	}
+
+	middlewareIdx := idx - len(commonMiddleware)
+	if middlewareIdx <= len(ru.middleware)-1 {
+		return ru.middleware[middlewareIdx](constructHandler(idx+1, ru))
+	}
+
+	commonAfterMiddlewareIdx := idx - len(commonMiddleware) - len(ru.middleware)
+	if commonAfterMiddlewareIdx <= len(commonAfterMiddleware)-1 {
+		return commonAfterMiddleware[commonAfterMiddlewareIdx](constructHandler(idx+1, ru))
+	}
+
+	return http.HandlerFunc(ru.handler)
 }
 
 // テスト用
@@ -365,7 +374,7 @@ func Bind[S any](r *http.Request, body string, s *S) error {
 	}
 
 	// パラメータ、クエリー -> 構造体へのbind
-	for i := 0; i < rt.NumField(); i++ {
+	for i := range rt.NumField() {
 		j := rt.Field(i).Tag.Get("json")
 		if j == "" { // jsonの場合は既にbind済みのためここでは何もしない。
 			var fieldName string
