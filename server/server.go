@@ -86,27 +86,32 @@ var (
 
 // GETメソッドのハンドラの設定
 // 既に存在するパスかつメソッドを設定するとpanicになる。
+// ミドルウェアは先頭から順に実行されていく。
 func Get(path string, hr Handler, middleware ...Middleware) {
 	setHandler(path, hr, http.MethodGet, middleware...)
 }
 
 // POSTメソッドのハンドラの設定
 // 既に存在するパスかつメソッドを設定するとpanicになる。
+// ミドルウェアは先頭から順に実行されていく。
 func Post(path string, hr Handler, middleware ...Middleware) {
 	setHandler(path, hr, http.MethodPost, middleware...)
 }
 
 // 共通のミドルウェア
-// すべてのハンドラの前に実行されるミドルウェア
-// 先頭から順に実行されていく
+// すべてのハンドラの前に実行されるミドルウェアで、先頭から順に実行されていく
+// このミドルウェアはルーティング処理の前に動作する。
+// 共通のミドルウェア -> 個々のミドルウェア -> 共通の後続ミドルウェア -> ルーティング処理 -> ハンドラ処理
 func SetCommonMiddleware(m ...Middleware) {
 	commonMiddleware = m
 }
 
 // 共通の後続ミドルウェア
 // 個別のミドルウェアの後に実行されるミドルウェアを登録する
-// 共通のミドルウェア -> 個々のミドルウェア -> 共通の後続ミドルウェア -> ハンドラ処理
+// 共通のミドルウェア -> 個々のミドルウェア -> 共通の後続ミドルウェア -> ルーティング処理 -> ハンドラ処理
 // 先頭から順に実行されていく
+// このミドルウェアはルーティング処理の後に動作するため、ルートが確定する前に処理が終了した場合は実行されない。
+// 例えば、no mothodの場合は実行されない。
 func SetCommonAfterMiddleware(m ...Middleware) {
 	commonAfterMiddleware = m
 }
@@ -163,7 +168,7 @@ func StartServer(c context.Context, host string, port int) {
 	// また、無効なパスも一旦はすべてハンドリングする構成にしたかったため。
 	// （ ※ mux.Handle("/aaa") mux.Handle("/bbb") ... といった具合。）
 	mux := http.NewServeMux()
-	mux.Handle("/", http.HandlerFunc(finalHandler))
+	mux.Handle("/", http.HandlerFunc(recoverHandler))
 
 	// サーバー構造体を作成
 	srv := &http.Server{Addr: fmt.Sprintf("%s:%d", host, port), Handler: mux}
@@ -219,7 +224,7 @@ func getPathParamVal(r *http.Request, pathParamName string) string {
 	return pathParam.(pathParamTable)[pathParamName]
 }
 
-func finalHandler(w http.ResponseWriter, r *http.Request) {
+func recoverHandler(w http.ResponseWriter, r *http.Request) {
 	// panicはスタックトレースを出力してすべてinternal serverエラーとして返す。
 	defer func() {
 		if rv := recover(); rv != nil {
@@ -242,6 +247,10 @@ func finalHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	constructHandlerBeforeRouting(0).ServeHTTP(w, r)
+}
+
+func routingHandler(w http.ResponseWriter, r *http.Request) {
 	// path paramを含むpathに対応するルートを探す
 	if splitPath := strings.Split(r.URL.Path, "/"); len(splitPath) > 2 {
 		pathParamCandidate := string(splitPath[len(splitPath)-1])
@@ -257,7 +266,7 @@ func finalHandler(w http.ResponseWriter, r *http.Request) {
 			ctx := context.WithValue(r.Context(), contextKey{Key: "pathParam"}, pathParam)
 			r = r.WithContext(ctx)
 
-			constructHandler(0, ru).ServeHTTP(w, r)
+			constructHandlerAfterRouting(0, ru).ServeHTTP(w, r)
 			return
 		}
 	}
@@ -265,7 +274,7 @@ func finalHandler(w http.ResponseWriter, r *http.Request) {
 	// pathに対応するルートを探す
 	ru := getRoute(r.URL.Path, r.Method)
 	if ru != nil {
-		constructHandler(0, ru).ServeHTTP(w, r)
+		constructHandlerAfterRouting(0, ru).ServeHTTP(w, r)
 		return
 	}
 
@@ -273,22 +282,25 @@ func finalHandler(w http.ResponseWriter, r *http.Request) {
 	SetResponseAsJson(w, r, http.StatusNotFound, &noMethodResponse)
 }
 
-// commonMiddleware -> 個別のミドルウェア（ru.middleware） -> commonAfterMiddleware -> ハンドラ処理
+// 各commonMiddleware -> routingHandlerの順に実行されるハンドラを構築する。
+func constructHandlerBeforeRouting(middleWareIdx int) http.Handler {
+	if middleWareIdx <= len(commonMiddleware)-1 {
+		return commonMiddleware[middleWareIdx](constructHandlerBeforeRouting(middleWareIdx + 1))
+	}
+	return http.HandlerFunc(routingHandler)	
+}
+
+// 各ルートのミドルウェア（ru.middleware） -> commonAfterMiddleware -> ルートのハンドラ処理(ru.handler)
 // という順番で実行されるハンドラを構築する。
-func constructHandler(idx int, ru *route) http.Handler {
-	commonMiddlewareIdx := idx
-	if commonMiddlewareIdx <= len(commonMiddleware)-1 {
-		return commonMiddleware[commonMiddlewareIdx](constructHandler(idx+1, ru))
-	}
-
-	middlewareIdx := idx - len(commonMiddleware)
+func constructHandlerAfterRouting(idx int, ru *route) http.Handler {
+	middlewareIdx := idx
 	if middlewareIdx <= len(ru.middleware)-1 {
-		return ru.middleware[middlewareIdx](constructHandler(idx+1, ru))
+		return ru.middleware[middlewareIdx](constructHandlerAfterRouting(idx+1, ru))
 	}
 
-	commonAfterMiddlewareIdx := idx - len(commonMiddleware) - len(ru.middleware)
+	commonAfterMiddlewareIdx := idx - len(ru.middleware)
 	if commonAfterMiddlewareIdx <= len(commonAfterMiddleware)-1 {
-		return commonAfterMiddleware[commonAfterMiddlewareIdx](constructHandler(idx+1, ru))
+		return commonAfterMiddleware[commonAfterMiddlewareIdx](constructHandlerAfterRouting(idx+1, ru))
 	}
 
 	return http.HandlerFunc(ru.handler)

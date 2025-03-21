@@ -569,7 +569,7 @@ func TestHTMLResponse(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodGet, "/html", nil)
 	res := httptest.NewRecorder()
-	http.HandlerFunc(finalHandler).ServeHTTP(res, req)
+	http.HandlerFunc(recoverHandler).ServeHTTP(res, req)
 
 	t.Run("", func(t *testing.T) {
 		testutil.AssertEqual(t, res.Body.String(), htmlContent)
@@ -591,7 +591,7 @@ func execRequest[S any](t *testing.T, testName string, method string, path strin
 
 	res := httptest.NewRecorder()
 
-	http.HandlerFunc(finalHandler).ServeHTTP(res, req)
+	http.HandlerFunc(recoverHandler).ServeHTTP(res, req)
 
 	expectJson := toJsonString(expect)
 	t.Run(testName, func(t *testing.T) {
