@@ -11,7 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
-	"runtime/debug"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -223,7 +223,20 @@ func finalHandler(w http.ResponseWriter, r *http.Request) {
 	// panicはスタックトレースを出力してすべてinternal serverエラーとして返す。
 	defer func() {
 		if rv := recover(); rv != nil {
-			l.Error(r.Context(), fmt.Sprintf("panic: %v\n\n", rv)+string(debug.Stack()))
+			stack := make([]uintptr, 32)
+			// runtime.Callers(0), 本箇所(1), panic関数(2) をスキップしてエラー箇所を起点とする。
+			n := runtime.Callers(3, stack)
+			stack = stack[:n]
+			frames := runtime.CallersFrames(stack)
+			var trace string
+			for {
+				frame, more := frames.Next()
+				trace += fmt.Sprintf("%s\n\t%s:%d\n", frame.Function, frame.File, frame.Line)
+				if !more {
+					break
+				}
+			}
+			l.Error(r.Context(), fmt.Sprintf("panic(server recovered): %v\n", rv)+trace)
 			SetResponseAsJson(w, r, http.StatusInternalServerError, &internalServerErrorJsonResponse)
 			return
 		}

@@ -57,7 +57,7 @@ func TestInternalServerError(t *testing.T) {
 
 	Get("/panic", func(w http.ResponseWriter, r *http.Request) {
 		handle(w, r, nil, (*emptyDataResponse)(nil), http.StatusOK, func(req *addCommentRequest) (any, error) {
-			panic("")
+			panic("dummy panic")
 		})
 	})
 	execRequest(t, "fail", http.MethodGet, "/panic", nil, nil, http.StatusInternalServerError, errorResponse)
@@ -71,7 +71,7 @@ func TestInternalServerErrorOnMiddleware(t *testing.T) {
 
 	middleware := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			panic("")
+			panic("dummy panic")
 		})
 	}
 
@@ -89,7 +89,7 @@ func TestInternalServerErrorOnCommonMiddleware(t *testing.T) {
 
 	commonMiddleware1 := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			panic("")
+			panic("dummy panic")
 		})
 	}
 	SetCommonMiddleware(commonMiddleware1)
