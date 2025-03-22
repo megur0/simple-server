@@ -70,16 +70,26 @@ var (
 	noMethodResponse []byte = []byte(`{"message":"no method"}`)
 
 	// 対象のルートが無いときに返すレスポンスのContentType
-	noMethodContentType string = "application/json"
+	noMethodContentType string = ContentTypeJSON
 
 	// 500エラーの際に返すレスポンス
 	internalServerErrorResponse []byte = []byte(`{"message":"internal server error"}`)
 
 	// 500エラーの際に返すレスポンスのContentType
-	internalServerErrorContentType string = "application/json"
+	internalServerErrorContentType string = ContentTypeJSON
 
 	// Graceful shutdown時にタイムアウトとして設定する秒数
 	ShutdownTimeoutSecond = 8 * time.Second
+)
+
+const (
+	ContentTypeJSON           = "application/json"
+	ContentTypeXML            = "application/xml"
+	ContentTypePlainText      = "text/plain"
+	ContentTypeHTML           = "text/html"
+	ContentTypeFormURLEnc     = "application/x-www-form-urlencoded"
+	ContentTypeMultipart      = "multipart/form-data"
+	ContentTypeHTMLWithCharset = "text/html; charset=utf-8"
 )
 
 // GETメソッドのハンドラの設定
