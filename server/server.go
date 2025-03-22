@@ -162,27 +162,18 @@ func SetResponse(w http.ResponseWriter, r *http.Request, contentType string, sta
 // サーバーを起動する
 // この関数を実行する前に、各ハンドラの設定を行う必要がある。
 // シャットダウンはGraceful shutdownとなる。
-//
-// デフォルトのマルチプレクサ（DefaultServeMux）を利用していないため、
-// 本パッケージのAPIとは別でhttp.HandleFunc("/some", /*...*/)などでルートを設定しても、
-// 本関数で起動されたサーバーのルーティングには設定されないため注意。
 func StartServer(c context.Context, host string, port int) {
-	// マルチプレクサ（ルーティング情報）を作成してハンドラーを紐付けている。
-	// ※ 作成せずにグローバルなマルチプレクサを使っても別に良かったかもしれない。
-	//
 	// 各パスごとにHandle関数でハンドラを設定するのではなく、
-	// ルート（"/"）に対して、ルートとなるハンドラ（finalHandler）を設定している。
-	// finalHandlerは、リクエストパスを開発者が登録したルーティング情報（ハンドラ／ミドルウェア）から検索して実行する。
+	// ルート（"/"）に対して、ルートとなるハンドラを設定している。
+	// recoverHandlerは後続処理でpanicが発生した場合のリカバリーとスタックトレース、
+	// 後続のroutingHandlerは、リクエストパスを開発者が登録したルーティング情報（ハンドラ／ミドルウェア）から検索して実行する。
 	//
 	// パスごとにHandle関数でハンドラを設定する方法（※）を採用していないのは、
 	// 上記の方がコードを簡潔に書けそうだったため。
 	// また、無効なパスも一旦はすべてハンドリングする構成にしたかったため。
-	// （ ※ mux.Handle("/aaa") mux.Handle("/bbb") ... といった具合。）
-	mux := http.NewServeMux()
-	mux.Handle("/", http.HandlerFunc(recoverHandler))
-
-	// サーバー構造体を作成
-	srv := &http.Server{Addr: fmt.Sprintf("%s:%d", host, port), Handler: mux}
+	// （ ※ http.Handle("/aaa") http.Handle("/bbb") ... といった具合。）
+	http.Handle("/", http.HandlerFunc(recoverHandler))
+	srv := &http.Server{Addr: fmt.Sprintf("%s:%d", host, port)}
 
 	// ここでgo routineを使うのはmainのスレッドではgraceful shutdownの待機をしておくため。
 	go func() {
