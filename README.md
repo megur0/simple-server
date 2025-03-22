@@ -3,10 +3,14 @@
 
 # 特徴
 * コード量が少ない軽量なパッケージ
-* ミドルウェアの指定
+* 3種類のミドルウェアの指定
+	* ルーティング処理前に共通で実行されるミドルウェア
+	* 各ルート毎に設定可能なミドルウェア
+	* 各ルート毎のミドルウェア実行後に実行する共通のミドルウェア
 * パラメータとしてボディ(JSON)、パスパラメータ、クエリーパラメータに対応
     * Bind関数を呼ぶことでリクエストのデータを構造体へバインドする
     * 構造体には"json", "query", "param"で指定
+* panicが発生した際のスタックトレース出力
 * Graceful shutdown
 
 # サンプルコード
@@ -14,7 +18,7 @@
 package main
 
 import (
-    "github.com/megur0/simple-server"
+    "github.com/megur0/simple-server/server"
 )
 
 func main() {
@@ -48,8 +52,3 @@ func main() {
     server.StartServer(context.Background(), "localhost", 8080)
 }
 ```
-
-# TODO
-* エラー時のレスポンス
-    * 現状、no methodやinternal server errorの際にapplication/jsonで返している
-    * これをカスタマイズできるようにする。

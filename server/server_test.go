@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -35,7 +36,8 @@ func TestMain(m *testing.M) {
 }
 
 func resetSetting() {
-	SetNoMethodResponse(createResponse(false, errorDataResponse{Message: "no method"}))
+	SetNoMethodResponse("application/json", GetErrorResponseJson("no method"))
+	SetInternalServerErrorResponse("application/json", GetErrorResponseJson("something error"))
 	SetCommonAfterMiddleware()
 	SetCommonMiddleware()
 	router = map[string]route{}
@@ -51,53 +53,81 @@ func TestServer(t *testing.T) {
 
 // go test -v -count=1 -timeout 60s -run ^TestInternalServerError$ ./server
 func TestInternalServerError(t *testing.T) {
-	resetSetting()
-	errorResponse := createResponse(false, errorDataResponse{Message: "something error"})
-	SetInternalServerErrorJsonResponse(errorResponse)
-
-	Get("/panic", func(w http.ResponseWriter, r *http.Request) {
-		handle(w, r, nil, (*emptyDataResponse)(nil), http.StatusOK, func(req *addCommentRequest) (any, error) {
-			panic("dummy panic")
+	t.Run("レスポンスに空のバイトを設定", func(t *testing.T) {
+		resetSetting()
+		SetInternalServerErrorResponse("application/json", []byte{})
+		Get("/panic", func(w http.ResponseWriter, r *http.Request) {
+			handle(w, r, nil, (*emptyDataResponse)(nil), http.StatusOK, func(req *addCommentRequest) (any, error) {
+				panic("dummy panic")
+			})
 		})
+		execRequest[any](t, http.MethodGet, "/panic", nil, nil, http.StatusInternalServerError, nil)
 	})
-	execRequest(t, "fail", http.MethodGet, "/panic", nil, nil, http.StatusInternalServerError, errorResponse)
-}
 
-// go test -v -count=1 -timeout 60s -run ^TestInternalServerErrorOnMiddleware$ ./server
-func TestInternalServerErrorOnMiddleware(t *testing.T) {
-	resetSetting()
-	errorResponse := createResponse(false, errorDataResponse{Message: "something error"})
-	SetInternalServerErrorJsonResponse(errorResponse)
-
-	middleware := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			panic("dummy panic")
+	t.Run("レスポンスにnilを設定", func(t *testing.T) {
+		resetSetting()
+		SetInternalServerErrorResponse("application/json", nil)
+		Get("/panic", func(w http.ResponseWriter, r *http.Request) {
+			handle(w, r, nil, (*emptyDataResponse)(nil), http.StatusOK, func(req *addCommentRequest) (any, error) {
+				panic("dummy panic")
+			})
 		})
-	}
-
-	Get("/panic", func(w http.ResponseWriter, r *http.Request) {
-		SetResponseAsJson(w, r, http.StatusOK, "dummy")
-	}, middleware)
-	execRequest(t, "fail", http.MethodGet, "/panic", nil, nil, http.StatusInternalServerError, errorResponse)
-}
-
-// go test -v -count=1 -timeout 60s -run ^TestInternalServerErrorOnCommonMiddleware$ ./server
-func TestInternalServerErrorOnCommonMiddleware(t *testing.T) {
-	resetSetting()
-	errorResponse := createResponse(false, errorDataResponse{Message: "something error"})
-	SetInternalServerErrorJsonResponse(errorResponse)
-
-	commonMiddleware1 := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			panic("dummy panic")
-		})
-	}
-	SetCommonMiddleware(commonMiddleware1)
-
-	Get("/panic", func(w http.ResponseWriter, r *http.Request) {
-		SetResponseAsJson(w, r, http.StatusOK, "dummy")
+		execRequest[any](t, http.MethodGet, "/panic", nil, nil, http.StatusInternalServerError, nil)
 	})
-	execRequest(t, "fail", http.MethodGet, "/panic", nil, nil, http.StatusInternalServerError, errorResponse)
+
+	t.Run("ハンドラー内でpanic", func(t *testing.T) {
+		resetSetting()
+		Get("/panic", func(w http.ResponseWriter, r *http.Request) {
+			handle(w, r, nil, (*emptyDataResponse)(nil), http.StatusOK, func(req *addCommentRequest) (any, error) {
+				panic("dummy panic")
+			})
+		})
+		execRequest(t, http.MethodGet, "/panic", nil, nil, http.StatusInternalServerError, createResponse(false, errorDataResponse{Message: "something error"}))
+	})
+
+	t.Run("ミドルウェア内でpanic", func(t *testing.T) {
+		resetSetting()
+		middleware := func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				panic("dummy panic")
+			})
+		}
+
+		Get("/panic", func(w http.ResponseWriter, r *http.Request) {
+			SetResponseAsJson(w, r, http.StatusOK, "dummy")
+		}, middleware)
+		execRequest(t, http.MethodGet, "/panic", nil, nil, http.StatusInternalServerError, createResponse(false, errorDataResponse{Message: "something error"}))
+	})
+
+	t.Run("共通ミドルウェア内でpanic", func(t *testing.T) {
+		resetSetting()
+		commonMiddleware1 := func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				panic("dummy panic")
+			})
+		}
+		SetCommonMiddleware(commonMiddleware1)
+
+		Get("/panic", func(w http.ResponseWriter, r *http.Request) {
+			SetResponseAsJson(w, r, http.StatusOK, "dummy")
+		})
+		execRequest(t, http.MethodGet, "/panic", nil, nil, http.StatusInternalServerError, createResponse(false, errorDataResponse{Message: "something error"}))
+	})
+
+	t.Run("共通の後続ミドルウェア内でpanic", func(t *testing.T) {
+		resetSetting()
+		commonAfterMiddleware1 := func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				panic("dummy panic")
+			})
+		}
+		SetCommonAfterMiddleware(commonAfterMiddleware1)
+
+		Get("/panic", func(w http.ResponseWriter, r *http.Request) {
+			SetResponseAsJson(w, r, http.StatusOK, "dummy")
+		})
+		execRequest(t, http.MethodGet, "/panic", nil, nil, http.StatusInternalServerError, createResponse(false, errorDataResponse{Message: "something error"}))
+	})
 }
 
 // Bindした後もBodyが読み込めることを確認
@@ -123,9 +153,13 @@ func TestRequestBodyReadableAfterBind(t *testing.T) {
 	})
 
 	requestBody := `{"field":"test value"}`
-	execRequest(t, "read_body_after_bind", http.MethodGet, "/read-body", stringToIoReader(requestBody), nil, http.StatusOK, &response{
-		IsSuccess: true,
-		Data:      requestBody,
+
+	t.Run("Bind実行後にリクエストボディが読み込めることを確認", func(t *testing.T) {
+		body := stringToIoReader(requestBody)
+		execRequest(t, http.MethodGet, "/read-body", body, nil, http.StatusOK, &response{
+			IsSuccess: true,
+			Data:      requestBody,
+		})
 	})
 }
 
@@ -218,15 +252,17 @@ func TestMiddlewareOrder(t *testing.T) {
 		})
 	}, middleware1, middleware2, middleware3)
 
-	execRequest(t, "middleware_order_test", http.MethodGet, "/middleware-order-test", nil, nil, http.StatusOK, &response{
-		IsSuccess: true,
-		Data:      nil,
-	})
+	t.Run("ミドルウェアの実行順序が想定通り", func(t *testing.T) {
+		execRequest(t, http.MethodGet, "/middleware-order-test", nil, nil, http.StatusOK, &response{
+			IsSuccess: true,
+			Data:      nil,
+		})
 
-	expectedOrder := []string{"commonMiddleware1", "commonMiddleware2", "middleware1", "middleware2", "middleware3", "commonAfterMiddleware1", "commonAfterMiddleware2"}
-	if !reflect.DeepEqual(middlewareExecutionOrder, expectedOrder) {
-		t.Fatalf("unexpected middleware execution order: got %v, want %v", middlewareExecutionOrder, expectedOrder)
-	}
+		expectedOrder := []string{"commonMiddleware1", "commonMiddleware2", "middleware1", "middleware2", "middleware3", "commonAfterMiddleware1", "commonAfterMiddleware2"}
+		if !reflect.DeepEqual(middlewareExecutionOrder, expectedOrder) {
+			t.Fatalf("unexpected middleware execution order: got %v, want %v", middlewareExecutionOrder, expectedOrder)
+		}
+	})
 }
 
 // go test -v -count=1 -timeout 60s -run ^TestHandler$ ./server
@@ -295,147 +331,182 @@ func TestHandler(t *testing.T) {
 		})
 	})
 
-	execRequest(t, "success_get_request", http.MethodGet, "/self", nil, nil, http.StatusOK, &response{
-		IsSuccess: true,
-		Data:      getUserResponse{},
+	t.Run("成功：GET /self", func(t *testing.T) {
+		execRequest(t, http.MethodGet, "/self", nil, nil, http.StatusOK, &response{
+			IsSuccess: true,
+			Data:      getUserResponse{},
+		})
 	})
 
-	execRequest(t, "failed_not_exist_method", http.MethodPost, "/self", nil, nil, http.StatusNotFound, &response{
-		IsSuccess: false,
-		Data:      errorDataResponse{Message: "no method"},
+	t.Run("失敗：存在しないメソッド", func(t *testing.T) {
+		execRequest(t, http.MethodPost, "/self", nil, nil, http.StatusNotFound, &response{
+			IsSuccess: false,
+			Data:      errorDataResponse{Message: "no method"},
+		})
 	})
 
-	execRequest(t, "failed_not_exist_path", http.MethodGet, "/user/test/test", nil, nil, http.StatusNotFound, &response{
-		IsSuccess: false,
-		Data:      errorDataResponse{Message: "no method"},
+	t.Run("失敗：存在しないパス", func(t *testing.T) {
+		execRequest(t, http.MethodGet, "/user/test/test", nil, nil, http.StatusNotFound, &response{
+			IsSuccess: false,
+			Data:      errorDataResponse{Message: "no method"},
+		})
 	})
 
-	execRequest(t, "failed_invalid_path", http.MethodGet, "/////", nil, nil, http.StatusNotFound, &response{
-		IsSuccess: false,
-		Data:      errorDataResponse{Message: "no method"},
+	t.Run("失敗：不正なパス", func(t *testing.T) {
+		execRequest(t, http.MethodGet, "/////", nil, nil, http.StatusNotFound, &response{
+			IsSuccess: false,
+			Data:      errorDataResponse{Message: "no method"},
+		})
 	})
 
-	execRequest(t, "failed_invalid_path", http.MethodGet, "/\";SELECT * FROM users\"", nil, nil, http.StatusNotFound, &response{
-		IsSuccess: false,
-		Data:      errorDataResponse{Message: "no method"},
+	t.Run("失敗：不正なパス (SQL Injection)", func(t *testing.T) {
+		execRequest(t, http.MethodGet, "/\";SELECT * FROM users\"", nil, nil, http.StatusNotFound, &response{
+			IsSuccess: false,
+			Data:      errorDataResponse{Message: "no method"},
+		})
 	})
 
-	execRequest(t, "success_path_param", http.MethodGet, "/friend/1111", nil, nil, http.StatusOK, &response{
-		IsSuccess: true,
-		Data: getFriendResponse{
-			Friend: friend{
-				ID:   "1111",
-				Name: "dummy name",
-			},
-		},
-	})
-
-	// 値がセットされていない場合は、リクエスト構造体には何も格納されずデフォルト値になる。
-	// エラーにはならない。
-	execRequest(t, "success_path_param", http.MethodGet, "/friend/", nil, nil, http.StatusOK, &response{
-		IsSuccess: true,
-		Data: getFriendResponse{
-			Friend: friend{
-				ID:   "0",
-				Name: "dummy name",
-			},
-		},
-	})
-
-	execRequest(t, "success_post_method", http.MethodPost, "/comment", stringToIoReader(`{"comment":"test comment\ntest comment"}`), nil, http.StatusCreated, &response{
-		IsSuccess: true,
-		Data:      nil,
-	})
-
-	execRequest(t, "success_post_method", http.MethodPost, "/comment", stringToIoReader(`{"comment":"\";DELETE * FROM users\""}`), nil, http.StatusCreated, &response{
-		IsSuccess: true,
-		Data:      nil,
-	})
-
-	execRequest(t, "failed_because_invalid_json_format", http.MethodPost, "/comment", stringToIoReader(`{"comment":4`), nil, http.StatusBadRequest, &response{
-		IsSuccess: false,
-		Data: errorDataResponse{
-			Message: newRequestBodyJsonSyntaxError(`{"comment":4`, errors.New("unexpected end of JSON input")).Error(),
-		},
-	})
-
-	execRequest(t, "failed_because_invalid_field_format", http.MethodPost, "/comment", stringToIoReader(`{"comment":4}`), nil, http.StatusBadRequest, &response{
-		IsSuccess: false,
-		Data: errorDataResponse{
-			// 本当はNewRequestBodyUnmarshalTypeErrorだが、
-			// "Go struct field addCommentRequest.comment of type string"に該当する
-			// reflect.Typeが分からなかった。(パッケージ内部で指定した文字列？)
-			Message: newErrRequestFieldFormat("comment", errors.New("json: cannot unmarshal number into Go struct field addCommentRequest.comment of type string")).Error(),
-		},
-	})
-
-	execRequest(t, "failed_because_invalid_field_format", http.MethodPost, "/uuid", stringToIoReader(`{"id":"000000000000"}`), nil, http.StatusBadRequest, &response{
-		IsSuccess: false,
-		Data: errorDataResponse{
-			Message: newErrRequestJsonSomethingInvalid(`{"id":"000000000000"}`, errors.New("invalid UUID length: 12")).Error(),
-		},
-	})
-
-	execRequest(t, "failed_path_param_because_invalid_format", http.MethodGet, "/friend/ああああ", nil, nil, http.StatusBadRequest, &response{
-		IsSuccess: false,
-		Data: errorDataResponse{
-			Message: newErrRequestFieldFormat("number", errors.New("invalid character 'ã' looking for beginning of value")).Error(),
-		},
-	})
-
-	// この場合は no methodになる。
-	execRequest(t, "failed_path_param_because_required_error", http.MethodGet, "/friend", nil, nil, http.StatusNotFound, &response{
-		IsSuccess: false,
-		Data: errorDataResponse{
-			Message: "no method",
-		},
-	})
-
-	execRequest(t, "success_query_param", http.MethodGet, "/friends", nil, map[string]string{"limit": "50"}, http.StatusOK, &response{
-		IsSuccess: true,
-		Data: getFriendsResponse{
-			List: []friend{
-				{
-					ID:   "1",
-					Name: "friend1",
-				},
-				{
-					ID:   "2",
-					Name: "friend2",
+	t.Run("成功：パスパラメータ", func(t *testing.T) {
+		execRequest(t, http.MethodGet, "/friend/1111", nil, nil, http.StatusOK, &response{
+			IsSuccess: true,
+			Data: getFriendResponse{
+				Friend: friend{
+					ID:   "1111",
+					Name: "dummy name",
 				},
 			},
-		},
+		})
 	})
 
-	execRequest(t, "success_query_param", http.MethodGet, "/friends", nil, map[string]string{"limit": "50", "option_int_ptr": "5", "option_time_ptr": `"2006-01-02T15:04:05.000000Z"`, "option_str_ptr": `"request str"`, "option_time": `"2016-01-02T15:04:05.000000Z"`}, http.StatusOK, &response{
-		IsSuccess: true,
-		Data: getFriendsResponse{
-			List: []friend{
-				{
-					ID:            "1",
-					Name:          "friend1",
-					OptionIntPtr:  5,
-					OptionStrPtr:  `"request str"`,
-					OptionTimePtr: testutil.GetFirst(time.Parse("2006-01-02T15:04:05.000000Z07:00", "2006-01-02T15:04:05.000000Z")),
-					OptionTime:    testutil.GetFirst(time.Parse("2006-01-02T15:04:05.000000Z07:00", "2016-01-02T15:04:05.000000Z")),
-				},
-				{
-					ID:            "2",
-					Name:          "friend2",
-					OptionIntPtr:  5,
-					OptionStrPtr:  `"request str"`,
-					OptionTimePtr: testutil.GetFirst(time.Parse("2006-01-02T15:04:05.000000Z07:00", "2006-01-02T15:04:05.000000Z")),
-					OptionTime:    testutil.GetFirst(time.Parse("2006-01-02T15:04:05.000000Z07:00", "2016-01-02T15:04:05.000000Z")),
+	t.Run("成功：パスパラメータ (デフォルト値)", func(t *testing.T) {
+		// 値がセットされていない場合は、リクエスト構造体には何も格納されずデフォルト値になる。
+		// エラーにはならない。
+		execRequest(t, http.MethodGet, "/friend/", nil, nil, http.StatusOK, &response{
+			IsSuccess: true,
+			Data: getFriendResponse{
+				Friend: friend{
+					ID:   "0",
+					Name: "dummy name",
 				},
 			},
-		},
+		})
 	})
 
-	execRequest(t, "failed_query_param_because_invalid_format", http.MethodGet, "/friends", nil, map[string]string{"limit": "あああ"}, http.StatusBadRequest, &response{
-		IsSuccess: false,
-		Data: errorDataResponse{
-			Message: newErrRequestFieldFormat("limit", errors.New("invalid character 'ã' looking for beginning of value")).Error(),
-		},
+	t.Run("成功：POST /comment", func(t *testing.T) {
+		execRequest(t, http.MethodPost, "/comment", stringToIoReader(`{"comment":"test comment\ntest comment"}`), nil, http.StatusCreated, &response{
+			IsSuccess: true,
+			Data:      nil,
+		})
+	})
+
+	t.Run("成功：POST /comment (SQL Injection)", func(t *testing.T) {
+		execRequest(t, http.MethodPost, "/comment", stringToIoReader(`{"comment":"\";DELETE * FROM users\""}`), nil, http.StatusCreated, &response{
+			IsSuccess: true,
+			Data:      nil,
+		})
+	})
+
+	t.Run("失敗：不正なJSONフォーマット", func(t *testing.T) {
+		execRequest(t, http.MethodPost, "/comment", stringToIoReader(`{"comment":4`), nil, http.StatusBadRequest, &response{
+			IsSuccess: false,
+			Data: errorDataResponse{
+				Message: newRequestBodyJsonSyntaxError(`{"comment":4`, errors.New("unexpected end of JSON input")).Error(),
+			},
+		})
+	})
+
+	t.Run("失敗：不正なフォーマット", func(t *testing.T) {
+		execRequest(t, http.MethodPost, "/comment", stringToIoReader(`{"comment":4}`), nil, http.StatusBadRequest, &response{
+			IsSuccess: false,
+			Data: errorDataResponse{
+				// 本当はNewRequestBodyUnmarshalTypeErrorだが、
+				// "Go struct field addCommentRequest.comment of type string"に該当する
+				// reflect.Typeが分からなかった。(パッケージ内部で指定した文字列？)
+				Message: newErrRequestFieldFormat("comment", errors.New("json: cannot unmarshal number into Go struct field addCommentRequest.comment of type string")).Error(),
+			},
+		})
+	})
+
+	t.Run("失敗：不正なフォーマット", func(t *testing.T) {
+		execRequest(t, http.MethodPost, "/uuid", stringToIoReader(`{"id":"000000000000"}`), nil, http.StatusBadRequest, &response{
+			IsSuccess: false,
+			Data: errorDataResponse{
+				Message: newErrRequestJsonSomethingInvalid(`{"id":"000000000000"}`, errors.New("invalid UUID length: 12")).Error(),
+			},
+		})
+	})
+
+	t.Run("パスパラメータ失敗: 不正なフォーマット", func(t *testing.T) {
+		execRequest(t, http.MethodGet, "/friend/ああああ", nil, nil, http.StatusBadRequest, &response{
+			IsSuccess: false,
+			Data: errorDataResponse{
+				Message: newErrRequestFieldFormat("number", errors.New("invalid character 'ã' looking for beginning of value")).Error(),
+			},
+		})
+	})
+
+	t.Run("パスパラメータの失敗: 必須項目", func(t *testing.T) {
+		// この場合は no methodになる。
+		execRequest(t, http.MethodGet, "/friend", nil, nil, http.StatusNotFound, &response{
+			IsSuccess: false,
+			Data: errorDataResponse{
+				Message: "no method",
+			},
+		})
+	})
+
+	t.Run("クエリーパラメータ成功1", func(t *testing.T) {
+		execRequest(t, http.MethodGet, "/friends", nil, map[string]string{"limit": "50"}, http.StatusOK, &response{
+			IsSuccess: true,
+			Data: getFriendsResponse{
+				List: []friend{
+					{
+						ID:   "1",
+						Name: "friend1",
+					},
+					{
+						ID:   "2",
+						Name: "friend2",
+					},
+				},
+			},
+		})
+	})
+
+	t.Run("クエリーパラメータ成功2", func(t *testing.T) {
+		execRequest(t, http.MethodGet, "/friends", nil, map[string]string{"limit": "50", "option_int_ptr": "5", "option_time_ptr": `"2006-01-02T15:04:05.000000Z"`, "option_str_ptr": `"request str"`, "option_time": `"2016-01-02T15:04:05.000000Z"`}, http.StatusOK, &response{
+			IsSuccess: true,
+			Data: getFriendsResponse{
+				List: []friend{
+					{
+						ID:            "1",
+						Name:          "friend1",
+						OptionIntPtr:  5,
+						OptionStrPtr:  `"request str"`,
+						OptionTimePtr: testutil.GetFirst(time.Parse("2006-01-02T15:04:05.000000Z07:00", "2006-01-02T15:04:05.000000Z")),
+						OptionTime:    testutil.GetFirst(time.Parse("2006-01-02T15:04:05.000000Z07:00", "2016-01-02T15:04:05.000000Z")),
+					},
+					{
+						ID:            "2",
+						Name:          "friend2",
+						OptionIntPtr:  5,
+						OptionStrPtr:  `"request str"`,
+						OptionTimePtr: testutil.GetFirst(time.Parse("2006-01-02T15:04:05.000000Z07:00", "2006-01-02T15:04:05.000000Z")),
+						OptionTime:    testutil.GetFirst(time.Parse("2006-01-02T15:04:05.000000Z07:00", "2016-01-02T15:04:05.000000Z")),
+					},
+				},
+			},
+		})
+
+	})
+
+	t.Run("クエリーパラメータ失敗:不正なパラメータ", func(t *testing.T) {
+		execRequest(t, http.MethodGet, "/friends", nil, map[string]string{"limit": "あああ"}, http.StatusBadRequest, &response{
+			IsSuccess: false,
+			Data: errorDataResponse{
+				Message: newErrRequestFieldFormat("limit", errors.New("invalid character 'ã' looking for beginning of value")).Error(),
+			},
+		})
 	})
 }
 
@@ -577,7 +648,7 @@ func TestHTMLResponse(t *testing.T) {
 	})
 }
 
-func execRequest[S any](t *testing.T, testName string, method string, path string, body io.Reader, query map[string]string, statusCode int, expect *S, ignoreField ...string) {
+func execRequest[S any](t *testing.T, method string, path string, body io.Reader, query map[string]string, statusCode int, expect *S, ignoreField ...string) {
 	t.Helper()
 	req, _ := http.NewRequest(method, path, body)
 	req.Header.Set("Content-Type", "application/json")
@@ -593,11 +664,11 @@ func execRequest[S any](t *testing.T, testName string, method string, path strin
 
 	http.HandlerFunc(recoverHandler).ServeHTTP(res, req)
 
-	expectJson := toJsonString(expect)
-	t.Run(testName, func(t *testing.T) {
+	if expect != nil {
+		expectJson := toJsonString(expect)
 		testutil.AssertJsonExact(t, res.Body.String(), expectJson, ignoreField)
 		testutil.AssertEqual(t, res.Result().StatusCode, statusCode)
-	})
+	}
 }
 
 func handle[REQ, DATA any, RES responseHasSet[DATA]](w http.ResponseWriter, r *http.Request, request *REQ, res RES, successStatusCode int, logic func(*REQ) (DATA, error)) {
@@ -647,6 +718,14 @@ func (r *emptyDataResponse) Set(i any) {}
 
 type errorDataResponse struct {
 	Message string `json:"message"`
+}
+
+func GetErrorResponseJson(message string) []byte {
+	jsn, err := json.Marshal(*createResponse(false, errorDataResponse{Message: message}))
+	if err != nil {
+		panic(err)
+	}
+	return jsn
 }
 
 func (r *errorDataResponse) Set(s string) {

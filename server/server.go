@@ -66,19 +66,17 @@ var (
 
 	commonAfterMiddleware = []Middleware{}
 
-	// ルートが無いときに返すレスポンス
-	noMethodResponse any = struct {
-		Message string `json:"message"`
-	}{
-		Message: "no method",
-	}
+	// 対象のルートが無いときに返すレスポンス
+	noMethodResponse []byte = []byte(`{"message":"no method"}`)
+
+	// 対象のルートが無いときに返すレスポンスのContentType
+	noMethodContentType string = "application/json"
 
 	// 500エラーの際に返すレスポンス
-	internalServerErrorJsonResponse any = struct {
-		Message string `json:"message"`
-	}{
-		Message: "internal server error",
-	}
+	internalServerErrorResponse []byte = []byte(`{"message":"internal server error"}`)
+
+	// 500エラーの際に返すレスポンスのContentType
+	internalServerErrorContentType string = "application/json"
 
 	// Graceful shutdown時にタイムアウトとして設定する秒数
 	ShutdownTimeoutSecond = 8 * time.Second
@@ -116,33 +114,36 @@ func SetCommonAfterMiddleware(m ...Middleware) {
 	commonAfterMiddleware = m
 }
 
-func SetNoMethodResponse(res any) {
-	noMethodResponse = res
+// ルートが見つからない場合のレスポンスを設定する
+// デフォルトはapplication/jsonで空のjson
+func SetNoMethodResponse(contentType string, data []byte) {
+	noMethodContentType = contentType
+	noMethodResponse = data
 }
 
-func SetInternalServerErrorJsonResponse(res any) {
-	internalServerErrorJsonResponse = res
+// 500エラーの場合のレスポンスを設定する
+// デフォルトはapplication/jsonで空のjson
+func SetInternalServerErrorResponse(contentType string, data []byte) {
+	internalServerErrorContentType = contentType
+	internalServerErrorResponse = data
 }
 
 // "application/json"としてレスポンスを返す
 // dataはjson.Marshalで変換可能な型である必要がある。
 // そうでない場合はpanicになる。
 func SetResponseAsJson(w http.ResponseWriter, r *http.Request, statusCode int, data any) {
-	// headerのSetは、WriteHeader関数の前に呼ぶ必要がある。
-	// 後に呼んでも変更が発生しない。
-	// https://pkg.go.dev/net/http#ResponseWriter
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-
 	jsn, err := json.Marshal(data)
 	if err != nil {
 		panic(err)
 	}
 
-	w.Write(jsn)
+	SetResponse(w, r, "application/json", statusCode, jsn)
 }
 
 func SetResponse(w http.ResponseWriter, r *http.Request, contentType string, statusCode int, data []byte) {
+	// headerのSetは、WriteHeader関数の前に呼ぶ必要がある。
+	// 後に呼んでも変更が発生しない。
+	// https://pkg.go.dev/net/http#ResponseWriter
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(statusCode)
 	w.Write(data)
@@ -242,7 +243,7 @@ func recoverHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			l.Error(r.Context(), fmt.Sprintf("panic(server recovered): %v\n", rv)+trace)
-			SetResponseAsJson(w, r, http.StatusInternalServerError, &internalServerErrorJsonResponse)
+			SetResponse(w, r, internalServerErrorContentType, http.StatusInternalServerError, internalServerErrorResponse)
 			return
 		}
 	}()
@@ -279,7 +280,7 @@ func routingHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// pathに対応するルートが無ければno method
-	SetResponseAsJson(w, r, http.StatusNotFound, &noMethodResponse)
+	SetResponse(w, r, noMethodContentType, http.StatusNotFound, noMethodResponse)
 }
 
 // 各commonMiddleware -> routingHandlerの順に実行されるハンドラを構築する。
@@ -287,7 +288,7 @@ func constructHandlerBeforeRouting(middleWareIdx int) http.Handler {
 	if middleWareIdx <= len(commonMiddleware)-1 {
 		return commonMiddleware[middleWareIdx](constructHandlerBeforeRouting(middleWareIdx + 1))
 	}
-	return http.HandlerFunc(routingHandler)	
+	return http.HandlerFunc(routingHandler)
 }
 
 // 各ルートのミドルウェア（ru.middleware） -> commonAfterMiddleware -> ルートのハンドラ処理(ru.handler)
