@@ -83,12 +83,12 @@ var (
 )
 
 const (
-	ContentTypeJSON           = "application/json"
-	ContentTypeXML            = "application/xml"
-	ContentTypePlainText      = "text/plain"
-	ContentTypeHTML           = "text/html"
-	ContentTypeFormURLEnc     = "application/x-www-form-urlencoded"
-	ContentTypeMultipart      = "multipart/form-data"
+	ContentTypeJSON            = "application/json"
+	ContentTypeXML             = "application/xml"
+	ContentTypePlainText       = "text/plain"
+	ContentTypeHTML            = "text/html"
+	ContentTypeFormURLEnc      = "application/x-www-form-urlencoded"
+	ContentTypeMultipart       = "multipart/form-data"
 	ContentTypeHTMLWithCharset = "text/html; charset=utf-8"
 )
 
@@ -139,15 +139,15 @@ func SetInternalServerErrorResponse(contentType string, data []byte) {
 }
 
 // "application/json"としてレスポンスを返す
-// dataはjson.Marshalで変換可能な型である必要がある。
-// そうでない場合はpanicになる。
+// dataはjson.Marshalで変換を行ってレスポンスへセットする。
+// json.Marshalで変換に失敗した場合はpanicとなる。
 func SetResponseAsJson(w http.ResponseWriter, r *http.Request, statusCode int, data any) {
 	jsn, err := json.Marshal(data)
 	if err != nil {
 		panic(err)
 	}
 
-	SetResponse(w, r, "application/json", statusCode, jsn)
+	SetResponse(w, r, ContentTypeJSON, statusCode, jsn)
 }
 
 func SetResponse(w http.ResponseWriter, r *http.Request, contentType string, statusCode int, data []byte) {
