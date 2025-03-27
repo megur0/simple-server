@@ -648,6 +648,153 @@ func TestHTMLResponse(t *testing.T) {
 	})
 }
 
+// go test -v -count=1 -timeout 60s -run ^TestBind$ ./server
+func TestBind(t *testing.T) {
+	resetSetting()
+
+	type testStruct struct {
+		Field1 string    `json:"field1"`
+		Field2 int       `json:"field2"`
+		Field3 *string   `json:"field3"`
+		Field4 *int      `json:"field4"`
+		Field5 time.Time `json:"field5"`
+		Field6 uuid.UUID `json:"field6"`
+	}
+
+	t.Run("成功: JSONリクエスト", func(t *testing.T) {
+		body := `{
+			"field1": "test string",
+			"field2": 123,
+			"field3": "optional string",
+			"field4": 456,
+			"field5": "2006-01-02T15:04:05.000000Z",
+			"field6": "00000000-0000-0000-0000-000000000000"
+		}`
+
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		var result testStruct
+		err := Bind(req, &result)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		testutil.AssertEqual(t, result.Field1, "test string")
+		testutil.AssertEqual(t, result.Field2, 123)
+		testutil.AssertEqual(t, *result.Field3, "optional string")
+		testutil.AssertEqual(t, *result.Field4, 456)
+		testutil.AssertEqual(t, result.Field5.String(), "2006-01-02 15:04:05 +0000 UTC")
+		testutil.AssertEqual(t, result.Field6.String(), "00000000-0000-0000-0000-000000000000")
+	})
+
+	t.Run("成功: クエリーパラメータ", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/?field1=test&field2=123", nil)
+
+		var result struct {
+			Field1 string `query:"field1"`
+			Field2 int    `query:"field2"`
+		}
+		err := Bind(req, &result)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		testutil.AssertEqual(t, result.Field1, "test")
+		testutil.AssertEqual(t, result.Field2, 123)
+	})
+
+	t.Run("成功: パスパラメータ", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test/123", nil)
+		ctx := context.WithValue(req.Context(), contextKey{Key: "pathParam"}, pathParamTable{"id": "123"})
+		req = req.WithContext(ctx)
+
+		var result struct {
+			ID int `param:"id"`
+		}
+		err := Bind(req, &result)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		testutil.AssertEqual(t, result.ID, 123)
+	})
+
+	t.Run("成功: フォームリクエスト", func(t *testing.T) {
+		body := "field1=test&field2=123"
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		var result struct {
+			Field1 string `form:"field1"`
+			Field2 int    `form:"field2"`
+		}
+		err := Bind(req, &result)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		testutil.AssertEqual(t, result.Field1, "test")
+		testutil.AssertEqual(t, result.Field2, 123)
+	})
+
+	t.Run("失敗: 不正なJSON", func(t *testing.T) {
+		body := `{"field1": "test", "field2": "invalid"}`
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		var result struct {
+			Field1 string `json:"field1"`
+			Field2 int    `json:"field2"`
+		}
+		err := Bind(req, &result)
+		if err == nil {
+			t.Fatal("expected error but got nil")
+		}
+
+		var bindErr *ErrBind
+		if !errors.As(err, &bindErr) {
+			t.Fatalf("unexpected error type: %v", err)
+		}
+	})
+
+	t.Run("失敗: 不正なクエリーパラメータ", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/?field2=invalid", nil)
+
+		var result struct {
+			Field2 int `query:"field2"`
+		}
+		err := Bind(req, &result)
+		if err == nil {
+			t.Fatal("expected error but got nil")
+		}
+
+		var bindErr *ErrBind
+		if !errors.As(err, &bindErr) {
+			t.Fatalf("unexpected error type: %v", err)
+		}
+	})
+
+	t.Run("失敗: 不正なパスパラメータ", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test/invalid", nil)
+		ctx := context.WithValue(req.Context(), contextKey{Key: "pathParam"}, pathParamTable{"id": "invalid"})
+		req = req.WithContext(ctx)
+
+		var result struct {
+			ID int `param:"id"`
+		}
+		err := Bind(req, &result)
+		if err == nil {
+			t.Fatal("expected error but got nil")
+		}
+
+		var bindErr *ErrBind
+		if !errors.As(err, &bindErr) {
+			t.Fatalf("unexpected error type: %v", err)
+		}
+	})
+}
+
 func execRequest[S any](t *testing.T, method string, path string, body io.Reader, query map[string]string, statusCode int, expect *S, ignoreField ...string) {
 	t.Helper()
 	req, _ := http.NewRequest(method, path, body)

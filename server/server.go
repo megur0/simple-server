@@ -356,12 +356,20 @@ func wrapByErrBind(err error) *ErrBind {
 
 // リクエストデータを構造体へBindする。
 // 構造体以外が指定された場合はpanicとなる。
-// 構造体のタグには、"json", "query", "param"を指定可能。
+// 構造体のタグには、"json", "query", "param", "form"を指定可能。
 // タグがないフィールドが存在する場合はpanicとなる。
+// "multipart/form-data"はサポートしていない。
 //
 // 本関数は値のバインドのみを行い、必須フィールドのチェックは含まれない。
 // したがって値が空の場合は何もしない。（何もしないので構造体はデフォルト値のままになる）
 func Bind[S any](r *http.Request, s *S) error {
+	// "multipart/form-data"はサポートしていない。
+	// 指定されていない場合はチェックしない。
+	contentType := r.Header.Get("Content-Type")
+	if contentType != "" && !isFormRequest(r) && !strings.HasPrefix(contentType, "application/json") {
+		return errors.New("Content-Type is not supported:" + r.Header.Get("Content-Type"))
+	}
+
 	rv := reflect.ValueOf(s).Elem()
 	rt := rv.Type()
 	if rt.Kind() != reflect.Struct {
@@ -373,7 +381,7 @@ func Bind[S any](r *http.Request, s *S) error {
 	r.Body = io.NopCloser(bytes.NewBuffer([]byte(body)))
 
 	// リクエストボディ -> 構造体へのbind
-	if body != "" {
+	if body != "" && !isFormRequest(r) {
 		// Unmarshalによる変換の際は、
 		// ・json側に余分なフィールドがあってもエラーにならない。
 		// ・json側に存在しない各フィールドはデフォルト値が設定される。
@@ -406,40 +414,65 @@ func Bind[S any](r *http.Request, s *S) error {
 		}
 	}
 
-	// パラメータ、クエリー -> 構造体へのbind
+	isFormRequest := isFormRequest(r)
+	if isFormRequest {
+		if err := r.ParseForm(); err != nil {
+			return wrapByErrBind(&ErrRequestFormParse{
+				Err: err,
+			})
+		}
+	}
+
+	// パラメータ、クエリー、フォーム -> 構造体へのbind
 	for i := range rt.NumField() {
 		j := rt.Field(i).Tag.Get("json")
-		if j == "" { // jsonの場合は既にbind済みのためここでは何もしない。
-			var fieldName string
-			var fieldValue string
-			p := rt.Field(i).Tag.Get("param")
-			if p != "" {
-				fieldName = p
-				fieldValue = getPathParamVal(r, p) // 空だったとしても空文字が取得されるので問題ない。
+		if j != "" { // jsonの場合は既にbind済みのためここでは何もしない。
+			continue
+		}
+
+		var fieldName string
+		var fieldValue string
+		p := rt.Field(i).Tag.Get("param")
+		if p != "" {
+			fieldName = p
+			fieldValue = getPathParamVal(r, p) // 空だったとしても空文字が取得されるので問題ない。
+		} else {
+			q := rt.Field(i).Tag.Get("query")
+			if q != "" {
+				fieldName = q
+				fieldValue = r.URL.Query().Get(q)
 			} else {
-				q := rt.Field(i).Tag.Get("query")
-				if q != "" {
-					fieldName = q
-					fieldValue = r.URL.Query().Get(q)
+				f := rt.Field(i).Tag.Get("form")
+				if f != "" {
+					if !isFormRequest {
+						panic("form tag is only available in form request")
+					}
+					fieldName = f
+					fieldValue = r.FormValue(f)
 				} else {
 					panic("binded struct should have at least one tag, which is json or param or query")
 				}
-			}
-			if fieldValue == "" {
-				// 値がセットされていない or リクエストに含まれていない場合は
-				// setStrToStructFieldは実行しない。（したがって構造体はゼロバリューのまま）
-				continue
-			}
-			if err := setStrToStructField(rv.Field(i), fieldValue); err != nil {
-				return wrapByErrBind(&ErrRequestFieldFormat{
-					Field: fieldName,
-					Err:   err,
-				})
-			}
+			} 
+		}
+		if fieldValue == "" {
+			// 値がセットされていない or リクエストに含まれていない場合は
+			// setStrToStructFieldは実行しない。（したがって構造体はゼロバリューのまま）
+			continue
+		}
+		if err := setStrToStructField(rv.Field(i), fieldValue); err != nil {
+			return wrapByErrBind(&ErrRequestFieldFormat{
+				Field: fieldName,
+				Err:   err,
+			})
 		}
 	}
 
 	return nil
+}
+
+func isFormRequest(r *http.Request) bool {
+	contentType := r.Header.Get("Content-Type")
+	return strings.HasPrefix(contentType, "application/x-www-form-urlencoded")
 }
 
 // structの各要素へURLのクエリやパスパラメータから取得したstringをセットする用途。

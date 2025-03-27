@@ -66,3 +66,15 @@ func (e *ErrRequestFieldFormat) Error() string {
 func (e *ErrRequestFieldFormat) Unwrap() error {
 	return e.Err
 }
+
+type ErrRequestFormParse struct {
+	Err   error
+}
+
+func (e *ErrRequestFormParse) Error() string {
+	return fmt.Sprintf("form parse error:%s", e.Err.Error())
+}
+
+func (e *ErrRequestFormParse) Unwrap() error {
+	return e.Err
+}
