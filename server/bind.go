@@ -43,7 +43,7 @@ func Bind[S any](r *http.Request, s *S) error {
 	if body != "" && !isFormRequest(r) {
 		// Unmarshalによる変換の際は、
 		// ・json側に余分なフィールドがあってもエラーにならない。
-		// ・json側に存在しない各フィールドはデフォルト値が設定される。
+		// ・json側に存在しない構造体のフィールドは何も上書きされない。
 		if err := json.Unmarshal([]byte(body), s); err != nil {
 			// json自体のシンタックスエラー
 			jsonUnmarshalErrSyntaxErr := &json.SyntaxError{}
