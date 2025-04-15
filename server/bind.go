@@ -20,7 +20,8 @@ import (
 // "multipart/form-data"はサポートしていない。
 //
 // 本関数は値のバインドのみを行い、必須フィールドのチェックは含まれない。
-// したがって値が空の場合は何もしない。（何もしないので構造体はデフォルト値のままになる）
+// 対象のフィールドが含まれない場合は何もセットしない。
+// その場合は構造体はデフォルト値のままになる。
 func Bind[S any](r *http.Request, s *S) error {
 	// "multipart/form-data"はサポートしていない。
 	// 指定されていない場合はチェックしない。
@@ -90,16 +91,28 @@ func Bind[S any](r *http.Request, s *S) error {
 		}
 
 		var fieldName string
-		var fieldValue string
+		var fieldValue *string
 		p := rt.Field(i).Tag.Get("param")
 		if p != "" {
 			fieldName = p
-			fieldValue = getPathParamVal(r, p) // 空だったとしても空文字が取得されるので問題ない。
+			val := getPathParamVal(r, p) 
+			
+			// 空の場合はセットを行わない。
+			// 例えば/friend/:idといったパスに対してマッチするのは
+			// /friend/1234といった形式のみであり、/friendはマッチしないため、
+			// ここでもし空文字が取得される場合はそもそもパス指定の中にパスパラメータが
+			// 含まれていないケースとなる。
+			if val != "" {
+				fieldValue = &val
+			}
 		} else {
 			q := rt.Field(i).Tag.Get("query")
 			if q != "" {
 				fieldName = q
-				fieldValue = r.URL.Query().Get(q)
+				val, ok := r.URL.Query()[fieldName]
+				if ok {
+					fieldValue = &val[0]
+				}
 			} else {
 				f := rt.Field(i).Tag.Get("form")
 				if f != "" {
@@ -107,18 +120,21 @@ func Bind[S any](r *http.Request, s *S) error {
 						panic("form tag is only available in form request")
 					}
 					fieldName = f
-					fieldValue = r.FormValue(f)
+					val, ok := r.Form[fieldName]
+					if ok {
+						fieldValue = &val[0]
+					}
 				} else {
 					panic("binded struct should have at least one tag, which is json or param or query")
 				}
 			}
 		}
-		if fieldValue == "" {
-			// 値がセットされていない or リクエストに含まれていない場合は
-			// setStrToStructFieldは実行しない。（したがって構造体はゼロバリューのまま）
+		if fieldValue == nil {
+			// リクエストに含まれていない場合はsetStrToStructFieldは実行しない。
+			// この場合は構造体はゼロバリューのままとなる。
 			continue
 		}
-		if err := setStrToStructField(rv.Field(i), fieldValue); err != nil {
+		if err := setStrToStructField(rv.Field(i), *fieldValue); err != nil {
 			return wrapByErrBind(&ErrRequestFieldFormat{
 				Field: fieldName,
 				Err:   err,
@@ -228,4 +244,3 @@ func wrapByErrBind(err error) *ErrBind {
 		Err: err,
 	}
 }
-

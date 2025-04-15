@@ -652,16 +652,16 @@ func TestHTMLResponse(t *testing.T) {
 func TestBind(t *testing.T) {
 	resetSetting()
 
-	type testStruct struct {
-		Field1 string    `json:"field1"`
-		Field2 int       `json:"field2"`
-		Field3 *string   `json:"field3"`
-		Field4 *int      `json:"field4"`
-		Field5 time.Time `json:"field5"`
-		Field6 uuid.UUID `json:"field6"`
-	}
-
 	t.Run("成功: JSONリクエスト", func(t *testing.T) {
+		type testStruct struct {
+			Field1 string    `json:"field1"`
+			Field2 int       `json:"field2"`
+			Field3 *string   `json:"field3"`
+			Field4 *int      `json:"field4"`
+			Field5 time.Time `json:"field5"`
+			Field6 uuid.UUID `json:"field6"`
+		}
+
 		body := `{
 			"field1": "test string",
 			"field2": 123,
@@ -692,8 +692,9 @@ func TestBind(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/?field1=test&field2=123", nil)
 
 		var result struct {
-			Field1 string `query:"field1"`
-			Field2 int    `query:"field2"`
+			Field1 string  `query:"field1"`
+			Field2 int     `query:"field2"`
+			Field3 *string `query:"field3"`
 		}
 		err := Bind(req, &result)
 		if err != nil {
@@ -702,6 +703,7 @@ func TestBind(t *testing.T) {
 
 		testutil.AssertEqual(t, result.Field1, "test")
 		testutil.AssertEqual(t, result.Field2, 123)
+		testutil.AssertEqual(t, result.Field3, (*string)(nil))
 	})
 
 	t.Run("成功: パスパラメータ", func(t *testing.T) {
@@ -726,8 +728,9 @@ func TestBind(t *testing.T) {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 		var result struct {
-			Field1 string `form:"field1"`
-			Field2 int    `form:"field2"`
+			Field1 string  `form:"field1"`
+			Field2 int     `form:"field2"`
+			Field3 *string `form:"field3"`
 		}
 		err := Bind(req, &result)
 		if err != nil {
@@ -736,6 +739,7 @@ func TestBind(t *testing.T) {
 
 		testutil.AssertEqual(t, result.Field1, "test")
 		testutil.AssertEqual(t, result.Field2, 123)
+		testutil.AssertEqual(t, result.Field3, (*string)(nil))
 	})
 
 	t.Run("失敗: 不正なJSON", func(t *testing.T) {
