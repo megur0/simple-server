@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -347,7 +348,10 @@ func TestBind(t *testing.T) {
 	})
 
 	t.Run("成功: クエリーパラメータ", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/?field1=test&field2=123", nil)
+		req := httptest.NewRequest(http.MethodGet, "/?"+getFormData(map[string]string{
+			"field1": "test",
+			"field2": "123",
+		}), nil)
 
 		var result struct {
 			Field1 string  `query:"field1"`
@@ -381,8 +385,12 @@ func TestBind(t *testing.T) {
 	})
 
 	t.Run("成功: フォームリクエスト", func(t *testing.T) {
-		body := "field1=test&field2=123&field4="
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(getFormData(map[string]string{
+			"field1": "test",
+			"field2": "123",
+			"field4": "",
+			"field5": "test\n\rtest",
+		})))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 		var result struct {
@@ -390,6 +398,7 @@ func TestBind(t *testing.T) {
 			Field2 int     `form:"field2"`
 			Field3 *string `form:"field3"`
 			Field4 *string `form:"field4"`
+			Field5 string  `form:"field5"`
 		}
 		err := Bind(req, &result)
 		if err != nil {
@@ -402,6 +411,7 @@ func TestBind(t *testing.T) {
 		testutil.AssertEqual(t, result.Field3, (*string)(nil))
 		// 値がない場合（空文字の場合）でもセットされる
 		testutil.AssertEqual(t, *result.Field4, "")
+		testutil.AssertEqual(t, result.Field5, "test\n\rtest")
 	})
 
 	t.Run("失敗: 不正なJSON", func(t *testing.T) {
@@ -459,4 +469,12 @@ func TestBind(t *testing.T) {
 			t.Fatalf("unexpected error type: %v", err)
 		}
 	})
+}
+
+func getFormData(m map[string]string) string {
+	formData := url.Values{}
+	for key, value := range m {
+		formData.Set(key, value)
+	}
+	return formData.Encode()
 }

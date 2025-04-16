@@ -26,8 +26,8 @@ func Bind[S any](r *http.Request, s *S) error {
 	// "multipart/form-data"はサポートしていない。
 	// 指定されていない場合はチェックしない。
 	contentType := r.Header.Get("Content-Type")
-	if contentType != "" && !isFormRequest(r) && !strings.HasPrefix(contentType, "application/json") {
-		return errors.New("Content-Type is not supported:" + r.Header.Get("Content-Type"))
+	if contentType != "" && !isFormRequest(r) && !strings.HasPrefix(contentType, ContentTypeJSON) {
+		return errors.New("Content-Type is not supported:" + contentType)
 	}
 
 	rv := reflect.ValueOf(s).Elem()
@@ -55,7 +55,7 @@ func Bind[S any](r *http.Request, s *S) error {
 				})
 			}
 			// intやboolなどの組み込み型において、型の不一致の場合のエラー
-			// ※ tpやUUID.uuidのUnmarshalJSONによるエラーはここには入らない。
+			// ※ UnmarshalJSONによるエラーはここには入らない。
 			jsonUnmarshalErrTypeErr := &json.UnmarshalTypeError{}
 			if errors.As(err, &jsonUnmarshalErrTypeErr) {
 				return wrapByErrBind(&ErrRequestFieldFormat{
@@ -65,8 +65,8 @@ func Bind[S any](r *http.Request, s *S) error {
 			}
 
 			// 上記以外のエラーはErrRequestJsonSomethingInvalidでラップする。
-			// どのフィールドのエラーなのか、という情報も返すことが理想だが、そのようにはできなかった。
-			// ※ json.Unmarshalは、個別に定義した型のUnmarshalJSONを実行してエラーが発生した場合に、そのerrorをそのまま返すため。
+			// どのフィールドのエラーなのか、という情報も返すことが理想ではあったが
+			// json.Unmarshalは、個別に定義した型のUnmarshalJSONを実行してエラーが発生した場合にそのerrorをそのまま返すため、難しかった。
 			return wrapByErrBind(&ErrRequestJsonSomethingInvalid{
 				Json: body,
 				Err:  err,
@@ -147,7 +147,7 @@ func Bind[S any](r *http.Request, s *S) error {
 
 func isFormRequest(r *http.Request) bool {
 	contentType := r.Header.Get("Content-Type")
-	return strings.HasPrefix(contentType, "application/x-www-form-urlencoded")
+	return strings.HasPrefix(contentType, ContentTypeFormURLEnc)
 }
 
 // structの各要素へURLのクエリやパスパラメータから取得したstringをセットする。

@@ -60,7 +60,7 @@ type ErrRequestFieldFormat struct {
 }
 
 func (e *ErrRequestFieldFormat) Error() string {
-	return fmt.Sprintf("json field invalid:%s, field:%s", e.Err.Error(), e.Field)
+	return fmt.Sprintf("field invalid:%s, field:%s", e.Err.Error(), e.Field)
 }
 
 func (e *ErrRequestFieldFormat) Unwrap() error {
