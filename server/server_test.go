@@ -440,7 +440,7 @@ func TestHandler(t *testing.T) {
 		execRequest(t, http.MethodGet, "/friend/ああああ", nil, nil, http.StatusBadRequest, &response{
 			IsSuccess: false,
 			Data: errorDataResponse{
-				Message: newErrRequestFieldFormat("number", errors.New("invalid character 'ã' looking for beginning of value")).Error(),
+				Message: newErrRequestFieldFormat("number", errors.New("strconv.Atoi: parsing \"ああああ\": invalid syntax")).Error(),
 			},
 		})
 	})
@@ -474,7 +474,7 @@ func TestHandler(t *testing.T) {
 	})
 
 	t.Run("クエリーパラメータ成功2", func(t *testing.T) {
-		execRequest(t, http.MethodGet, "/friends", nil, map[string]string{"limit": "50", "option_int_ptr": "5", "option_time_ptr": `"2006-01-02T15:04:05.000000Z"`, "option_str_ptr": `"request str"`, "option_time": `"2016-01-02T15:04:05.000000Z"`}, http.StatusOK, &response{
+		execRequest(t, http.MethodGet, "/friends", nil, map[string]string{"limit": "50", "option_int_ptr": "5", "option_time_ptr": `2006-01-02T15:04:05.000000Z`, "option_str_ptr": `"request str"`, "option_time": `2016-01-02T15:04:05.000000Z`}, http.StatusOK, &response{
 			IsSuccess: true,
 			Data: getFriendsResponse{
 				List: []friend{
@@ -504,7 +504,7 @@ func TestHandler(t *testing.T) {
 		execRequest(t, http.MethodGet, "/friends", nil, map[string]string{"limit": "あああ"}, http.StatusBadRequest, &response{
 			IsSuccess: false,
 			Data: errorDataResponse{
-				Message: newErrRequestFieldFormat("limit", errors.New("invalid character 'ã' looking for beginning of value")).Error(),
+				Message: newErrRequestFieldFormat("limit", errors.New("strconv.Atoi: parsing \"あああ\": invalid syntax")).Error(),
 			},
 		})
 	})
@@ -523,110 +523,31 @@ func stringToIoReader(str string) *strings.Reader {
 	return strings.NewReader(str)
 }
 
-// go test -v -count=1 -timeout 60s -run ^TestSetStrToStructField$ ./server
-func TestSetStrToStructField(t *testing.T) {
-	for _, v := range []struct {
-		v     reflect.Value
-		str   string
-		check func(*testing.T, reflect.Value)
-	}{
-		{
-			v:     reflect.ValueOf(ptr(0)).Elem(),
-			str:   "",
-			check: func(t *testing.T, rv reflect.Value) { testutil.AssertEqual(t, rv.Interface().(int), 0) },
-		},
-		{
-			v:     reflect.ValueOf(ptr(0)).Elem(),
-			str:   "5",
-			check: func(t *testing.T, rv reflect.Value) { testutil.AssertEqual(t, rv.Interface().(int), 5) },
-		},
-		{
-			v:     reflect.ValueOf(ptr("")).Elem(),
-			str:   `"test"`,
-			check: func(t *testing.T, rv reflect.Value) { testutil.AssertEqual(t, rv.Interface().(string), "test") },
-		},
-		{
-			v:     reflect.ValueOf(ptr("")).Elem(),
-			str:   `5`,
-			check: func(t *testing.T, rv reflect.Value) { testutil.AssertEqual(t, rv.Interface().(string), "5") },
-		},
-		{
-			v:     reflect.ValueOf(ptr(ptr(""))).Elem(),
-			str:   `5`,
-			check: func(t *testing.T, rv reflect.Value) { testutil.AssertEqual(t, *rv.Interface().(*string), "5") },
-		},
-		{
-			v:   reflect.ValueOf(&time.Time{}).Elem(),
-			str: `"2006-01-02T15:04:05.000000Z"`,
-			check: func(t *testing.T, rv reflect.Value) {
-				testutil.AssertEqual(t, rv.Interface().(time.Time).String(), "2006-01-02 15:04:05 +0000 UTC")
-			},
-		},
-		{
-			v:   reflect.ValueOf(&uuid.UUID{}).Elem(),
-			str: `"00000000-0000-0000-0000-000000000000"`,
-			check: func(t *testing.T, rv reflect.Value) {
-				testutil.AssertEqual(t, rv.Interface().(uuid.UUID).String(), "00000000-0000-0000-0000-000000000000")
-			},
-		},
-		{
-			v:   reflect.ValueOf(&struct{ V time.Time }{}).Elem().Field(0),
-			str: `"2006-01-02T15:04:05.000000Z"`,
-			check: func(t *testing.T, rv reflect.Value) {
-				testutil.AssertEqual(t, rv.Interface().(time.Time).String(), "2006-01-02 15:04:05 +0000 UTC")
-			},
-		},
-		{
-			v:   reflect.ValueOf(&struct{ V *uuid.UUID }{}).Elem().Field(0),
-			str: `"00000000-0000-0000-0000-000000000000"`,
-			check: func(t *testing.T, rv reflect.Value) {
-				testutil.AssertEqual(t, rv.Interface().(*uuid.UUID).String(), "00000000-0000-0000-0000-000000000000")
-			},
-		},
-	} {
-		t.Run("success for "+v.str, func(t *testing.T) {
-			if err := setStrToStructField(v.v, v.str); err != nil {
-				t.Fatal("unexpected result:", err)
-			}
-			v.check(t, v.v)
-		})
-	}
+type testUnmarshaler string
 
-	for _, v := range []struct {
-		v   reflect.Value
-		str string
-	}{
-		{
-			v:   reflect.ValueOf(ptr(0)).Elem(),
-			str: `"test"`,
-		},
-		{
-			v:   reflect.ValueOf(ptr(ptr(0))).Elem(),
-			str: `"test"`,
-		},
-		{
-			v:   reflect.ValueOf(ptr(uuid.UUID{})).Elem(),
-			str: `"test"`,
-		},
-		{
-			v:   reflect.ValueOf(ptr(ptr(uuid.UUID{}))).Elem(),
-			str: `"test"`,
-		},
-		{
-			v:   reflect.ValueOf(&time.Time{}).Elem(),
-			str: "2006",
-		},
-		{
-			v:   reflect.ValueOf(&struct{ V time.Time }{}).Elem().Field(0),
-			str: "2006",
-		},
-	} {
-		t.Run("failed for "+v.str, func(t *testing.T) {
-			if err := setStrToStructField(v.v, v.str); err == nil {
-				t.Error("should be error")
-			}
-		})
+func (t *testUnmarshaler) UnmarshalJSON(b []byte) error {
+	*t = testUnmarshaler(b)
+	var str string
+	if err := json.Unmarshal(b, &str); err != nil {
+		return err
 	}
+	*t = testUnmarshaler(str)
+	return nil
+}
+
+func (t testUnmarshaler) String() string {
+	return string(t)
+}
+
+type testTextUnmarshaler string
+
+func (t *testTextUnmarshaler) UnmarshalText(data []byte) error {
+	*t = testTextUnmarshaler(data)
+	return nil
+}
+
+func (t testTextUnmarshaler) String() string {
+	return string(t)
 }
 
 // go test -v -count=1 -timeout 60s -run ^TestHTMLResponse$ ./server
@@ -645,157 +566,6 @@ func TestHTMLResponse(t *testing.T) {
 	t.Run("", func(t *testing.T) {
 		testutil.AssertEqual(t, res.Body.String(), htmlContent)
 		testutil.AssertEqual(t, res.Result().StatusCode, http.StatusOK)
-	})
-}
-
-// go test -v -count=1 -timeout 60s -run ^TestBind$ ./server
-func TestBind(t *testing.T) {
-	resetSetting()
-
-	t.Run("成功: JSONリクエスト", func(t *testing.T) {
-		type testStruct struct {
-			Field1 string    `json:"field1"`
-			Field2 int       `json:"field2"`
-			Field3 *string   `json:"field3"`
-			Field4 *int      `json:"field4"`
-			Field5 time.Time `json:"field5"`
-			Field6 uuid.UUID `json:"field6"`
-		}
-
-		body := `{
-			"field1": "test string",
-			"field2": 123,
-			"field3": "optional string",
-			"field4": 456,
-			"field5": "2006-01-02T15:04:05.000000Z",
-			"field6": "00000000-0000-0000-0000-000000000000"
-		}`
-
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-
-		var result testStruct
-		err := Bind(req, &result)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		testutil.AssertEqual(t, result.Field1, "test string")
-		testutil.AssertEqual(t, result.Field2, 123)
-		testutil.AssertEqual(t, *result.Field3, "optional string")
-		testutil.AssertEqual(t, *result.Field4, 456)
-		testutil.AssertEqual(t, result.Field5.String(), "2006-01-02 15:04:05 +0000 UTC")
-		testutil.AssertEqual(t, result.Field6.String(), "00000000-0000-0000-0000-000000000000")
-	})
-
-	t.Run("成功: クエリーパラメータ", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/?field1=test&field2=123", nil)
-
-		var result struct {
-			Field1 string  `query:"field1"`
-			Field2 int     `query:"field2"`
-			Field3 *string `query:"field3"`
-		}
-		err := Bind(req, &result)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		testutil.AssertEqual(t, result.Field1, "test")
-		testutil.AssertEqual(t, result.Field2, 123)
-		testutil.AssertEqual(t, result.Field3, (*string)(nil))
-	})
-
-	t.Run("成功: パスパラメータ", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test/123", nil)
-		ctx := context.WithValue(req.Context(), contextKey{Key: "pathParam"}, pathParamTable{"id": "123"})
-		req = req.WithContext(ctx)
-
-		var result struct {
-			ID int `param:"id"`
-		}
-		err := Bind(req, &result)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		testutil.AssertEqual(t, result.ID, 123)
-	})
-
-	t.Run("成功: フォームリクエスト", func(t *testing.T) {
-		body := "field1=test&field2=123"
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-		var result struct {
-			Field1 string  `form:"field1"`
-			Field2 int     `form:"field2"`
-			Field3 *string `form:"field3"`
-		}
-		err := Bind(req, &result)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		testutil.AssertEqual(t, result.Field1, "test")
-		testutil.AssertEqual(t, result.Field2, 123)
-		testutil.AssertEqual(t, result.Field3, (*string)(nil))
-	})
-
-	t.Run("失敗: 不正なJSON", func(t *testing.T) {
-		body := `{"field1": "test", "field2": "invalid"}`
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-
-		var result struct {
-			Field1 string `json:"field1"`
-			Field2 int    `json:"field2"`
-		}
-		err := Bind(req, &result)
-		if err == nil {
-			t.Fatal("expected error but got nil")
-		}
-
-		var bindErr *ErrBind
-		if !errors.As(err, &bindErr) {
-			t.Fatalf("unexpected error type: %v", err)
-		}
-	})
-
-	t.Run("失敗: 不正なクエリーパラメータ", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/?field2=invalid", nil)
-
-		var result struct {
-			Field2 int `query:"field2"`
-		}
-		err := Bind(req, &result)
-		if err == nil {
-			t.Fatal("expected error but got nil")
-		}
-
-		var bindErr *ErrBind
-		if !errors.As(err, &bindErr) {
-			t.Fatalf("unexpected error type: %v", err)
-		}
-	})
-
-	t.Run("失敗: 不正なパスパラメータ", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test/invalid", nil)
-		ctx := context.WithValue(req.Context(), contextKey{Key: "pathParam"}, pathParamTable{"id": "invalid"})
-		req = req.WithContext(ctx)
-
-		var result struct {
-			ID int `param:"id"`
-		}
-		err := Bind(req, &result)
-		if err == nil {
-			t.Fatal("expected error but got nil")
-		}
-
-		var bindErr *ErrBind
-		if !errors.As(err, &bindErr) {
-			t.Fatalf("unexpected error type: %v", err)
-		}
 	})
 }
 

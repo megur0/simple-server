@@ -2,15 +2,15 @@ package server
 
 import (
 	"bytes"
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 // リクエストデータを構造体へBindする。
@@ -95,8 +95,8 @@ func Bind[S any](r *http.Request, s *S) error {
 		p := rt.Field(i).Tag.Get("param")
 		if p != "" {
 			fieldName = p
-			val := getPathParamVal(r, p) 
-			
+			val := getPathParamVal(r, p)
+
 			// 空の場合はセットを行わない。
 			// 例えば/friend/:idといったパスに対してマッチするのは
 			// /friend/1234といった形式のみであり、/friendはマッチしないため、
@@ -150,90 +150,207 @@ func isFormRequest(r *http.Request) bool {
 	return strings.HasPrefix(contentType, "application/x-www-form-urlencoded")
 }
 
-// structの各要素へURLのクエリやパスパラメータから取得したstringをセットする用途。
+// structの各要素へURLのクエリやパスパラメータから取得したstringをセットする。
+// 特徴として、encoding.TextUnmarshalerやjson.Unmarshalerを実装している型に対しては
+// UnmarshalTextやUnmarshalJSONを実行する。
+//
+// 空文字の場合(例えば?hoge=&fuge=)でもセット処理が実行される。
 func setStrToStructField(rv reflect.Value, str string) error {
 	if !rv.CanSet() {
 		panic("should only use canset value")
 	}
-	if str == "" {
-		return nil
-	}
 
-	switch rv.Interface().(type) {
-	case string:
-		var s string
-		b := []byte(str)
-		// 文字列がダブルクォートで囲まれていないとjson.Unmarshalでエラーとなるため、
-		// ここでダブルクォートで囲む。
-		if !strings.HasPrefix(str, `"`) || !strings.HasSuffix(str, `"`) {
-			b = []byte(`"` + str + `"`)
-		}
-		err := json.Unmarshal(b, &s)
-		if err != nil {
-			return err
-		}
-		rv.SetString(s)
+	// encoding.TextUnmarshalerやjson.Unmarshalerは基本的に
+	// ポインタレシーバーであるため、値型の場合はマッチしない。
+	// したがって型の判定はポインタに対して行う。
+	rva := rv
+	if rv.Kind() != reflect.Ptr {
+		rva = rv.Addr()
+	}
+	switch rva.Interface().(type) {
 	case *string:
-		var s string
-		b := []byte(str)
-		if !strings.HasPrefix(str, `"`) || !strings.HasSuffix(str, `"`) {
-			b = []byte(`"` + str + `"`)
-		}
-		err := json.Unmarshal(b, &s)
-		if err != nil {
-			return err
-		}
-		rv.Set(reflect.ValueOf(&str))
-	case int:
-		var i int
-		err := json.Unmarshal([]byte(str), &i)
-		if err != nil {
-			return err
-		}
-		// SetIntだと引数がint64で型エラーになるのでSetメソッドを使った。
-		// もっと良いやり方があるかもしれない。
-		rv.Set(reflect.ValueOf(i))
-	case *int:
-		var i int
-		err := json.Unmarshal([]byte(str), &i)
-		if err != nil {
-			return err
-		}
-		rv.Set(reflect.ValueOf(&i))
-	case uuid.UUID:
-		var u uuid.UUID
-		err := json.Unmarshal([]byte(str), &u)
-		if err != nil {
-			return err
-		}
-		rv.Set(reflect.ValueOf(u))
-	case *uuid.UUID:
-		var u uuid.UUID
-		err := json.Unmarshal([]byte(str), &u)
-		if err != nil {
-			return err
-		}
-		rv.Set(reflect.ValueOf(&u))
-	case json.Marshaler: // time.Time, *time.Timeや、Marshalerを実装した型がヒットする。
-		// case json.Unmarshaler: としていないのは、
-		// これはメソッドがポインタレシーバーのため、値型の場合（time.Time等）がヒットしなくなるため。
-		var mr json.Unmarshaler
-		var ok bool
 		if rv.Kind() == reflect.Ptr {
-			ev := reflect.New(rv.Type().Elem()) // ※ Newはポインターが帰る
-			rv.Set(ev)
-			mr, ok = ev.Interface().(json.Unmarshaler)
+			rv.Set(reflect.ValueOf(&str))
 		} else {
-			mr, ok = rv.Addr().Interface().(json.Unmarshaler)
+			rv.Set(reflect.ValueOf(str))
 		}
-		if !ok {
-			panic(fmt.Sprintf("this type is no Unmarshaler: %#v, %s", rv, rv.Type()))
-		}
-		if err := mr.UnmarshalJSON([]byte(str)); err != nil {
+	case *uint:
+		var v uint64
+		v, err := strconv.ParseUint(str, 10, strconv.IntSize)
+		if err != nil {
 			return err
+		}
+		vv := uint(v)
+		if rv.Kind() == reflect.Ptr {
+			rv.Set(reflect.ValueOf(&vv))
+		} else {
+			rv.Set(reflect.ValueOf(vv))
+		}
+	case *int:
+		var v int
+		v, err := strconv.Atoi(str)
+		if err != nil {
+			return err
+		}
+		if rv.Kind() == reflect.Ptr {
+			rv.Set(reflect.ValueOf(&v))
+		} else {
+			rv.Set(reflect.ValueOf(v))
+		}
+	case *bool:
+		var v bool
+		v, err := strconv.ParseBool(str)
+		if err != nil {
+			return err
+		}
+		if rv.Kind() == reflect.Ptr {
+			rv.Set(reflect.ValueOf(&v))
+		} else {
+			rv.Set(reflect.ValueOf(v))
+		}
+	case *int8:
+		var v int64
+		v, err := strconv.ParseInt(str, 10, 8)
+		if err != nil {
+			return err
+		}
+		vv := int8(v)
+		if rv.Kind() == reflect.Ptr {
+			rv.Set(reflect.ValueOf(&vv))
+		} else {
+			rv.Set(reflect.ValueOf(vv))
+		}
+	case *int16:
+		var v int64
+		v, err := strconv.ParseInt(str, 10, 16)
+		if err != nil {
+			return err
+		}
+		vv := int16(v)
+		if rv.Kind() == reflect.Ptr {
+			rv.Set(reflect.ValueOf(&vv))
+		} else {
+			rv.Set(reflect.ValueOf(vv))
+		}
+	case *int32:
+		var v int64
+		v, err := strconv.ParseInt(str, 10, 32)
+		if err != nil {
+			return err
+		}
+		vv := int32(v)
+		if rv.Kind() == reflect.Ptr {
+			rv.Set(reflect.ValueOf(&vv))
+		} else {
+			rv.Set(reflect.ValueOf(vv))
+		}
+	case *int64:
+		var v int64
+		v, err := strconv.ParseInt(str, 10, 64)
+		if err != nil {
+			return err
+		}
+		if rv.Kind() == reflect.Ptr {
+			rv.Set(reflect.ValueOf(&v))
+		} else {
+			rv.Set(reflect.ValueOf(v))
+		}
+	case *uint8:
+		var v uint64
+		v, err := strconv.ParseUint(str, 10, 8)
+		if err != nil {
+			return err
+		}
+		vv := uint8(v)
+		if rv.Kind() == reflect.Ptr {
+			rv.Set(reflect.ValueOf(&vv))
+		} else {
+			rv.Set(reflect.ValueOf(vv))
+		}
+	case *uint16:
+		var v uint64
+		v, err := strconv.ParseUint(str, 10, 16)
+		if err != nil {
+			return err
+		}
+		vv := uint16(v)
+		if rv.Kind() == reflect.Ptr {
+			rv.Set(reflect.ValueOf(&vv))
+		} else {
+			rv.Set(reflect.ValueOf(vv))
+		}
+	case *uint32:
+		var v uint64
+		v, err := strconv.ParseUint(str, 10, 32)
+		if err != nil {
+			return err
+		}
+		vv := uint32(v)
+		if rv.Kind() == reflect.Ptr {
+			rv.Set(reflect.ValueOf(&vv))
+		} else {
+			rv.Set(reflect.ValueOf(vv))
+		}
+	case *uint64:
+		var v uint64
+		v, err := strconv.ParseUint(str, 10, 64)
+		if err != nil {
+			return err
+		}
+		if rv.Kind() == reflect.Ptr {
+			rv.Set(reflect.ValueOf(&v))
+		} else {
+			rv.Set(reflect.ValueOf(v))
+		}
+	case *float32:
+		var v float64
+		v, err := strconv.ParseFloat(str, 32)
+		if err != nil {
+			return err
+		}
+		vv := float32(v)
+		if rv.Kind() == reflect.Ptr {
+			rv.Set(reflect.ValueOf(&vv))
+		} else {
+			rv.Set(reflect.ValueOf(vv))
+		}
+	case *float64:
+		var v float64
+		v, err := strconv.ParseFloat(str, 64)
+		if err != nil {
+			return err
+		}
+		if rv.Kind() == reflect.Ptr {
+			rv.Set(reflect.ValueOf(&v))
+		} else {
+			rv.Set(reflect.ValueOf(v))
+		}
+	case encoding.TextUnmarshaler:
+		// 例えば*uuid.UUIDや*time.Timeがヒットする。
+		if rv.Kind() == reflect.Ptr {
+			rv.Set(reflect.New(rv.Type().Elem()))
+			if err := rv.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(str)); err != nil {
+				return err
+			}
+		} else {
+			if err := rva.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(str)); err != nil {
+				return err
+			}
+		}
+	case json.Unmarshaler:
+		// UnmarshalJSONを実装している型がヒットする
+		if rv.Kind() == reflect.Ptr {
+			rv.Set(reflect.New(rv.Type().Elem()))
+			if err := rv.Interface().(json.Unmarshaler).UnmarshalJSON([]byte(str)); err != nil {
+				return err
+			}
+		} else {
+			if err := rva.Interface().(json.Unmarshaler).UnmarshalJSON([]byte(str)); err != nil {
+				return err
+			}
 		}
 	default:
-		panic(fmt.Sprintf("unexpected type: %T", rv))
+		panic(fmt.Sprintf("unsupported type: %T", rv.Interface()))
 	}
 
 	return nil

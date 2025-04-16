@@ -16,6 +16,7 @@
     * Bind関数を呼ぶことでリクエストのデータを構造体へバインドする
     * 構造体には"json", "form", "query", "param"で指定
 
+
 # サンプルコード
 ```go
 package main
@@ -56,3 +57,24 @@ func main() {
     server.StartServer(context.Background(), "localhost", 8080)
 }
 ```
+
+# Bind関数の仕様
+* "json"の場合
+	* json.Unmarshalによって構造体へバインドされる。
+		* Unmarshalではjson側に余分なフィールドがあってもエラーとはならない。
+		* json側に存在しない構造体のフィールドは何もセットされない。（ゼロ値のままとなる）
+* "form", "query", "param"の場合
+	* ビルトインの型へのバインド
+		* 文字列から指定された型へ変換して値をセットする
+	* 上記以外の型へのバインド
+		* 以下が実装されている場合はレシーバーが実行される
+			* encoding.TextUnmarshaler
+			* json.Unmarshaler
+		* UnmarshalerよりもTextUnmarshalerが優先される
+	* 存在しないフィールド、
+		* 対象のフィールド自体が存在しない場合
+			* 何もセットされない。（ゼロ値のままとなる）
+		* 対象のフィールドが空文字の場合
+			* たとえばクエリーであれば「https://example.com/?hoge=&fuga=a」といったケース
+			* この場合は空文字から指定された型へ変換される
+			* 空文字を受け付けない型の場合は変換エラーとなる
