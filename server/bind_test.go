@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -307,18 +308,58 @@ func TestSetStrToStructField(t *testing.T) {
 	}
 }
 
+type MyTypeWithUnmarshal struct {
+	uuid string
+}
+
+func (s *MyTypeWithUnmarshal) UnmarshalJSON(b []byte) error {
+	var str string
+	if err := json.Unmarshal(b, &str); err != nil {
+		return err
+	}
+	if str == "" {
+		return errors.New("empty string")
+	}
+	_, err := uuid.Parse(str)
+	if err != nil {
+		return errors.New("invalid uuid")
+	}
+	s.uuid = str
+	return nil
+}
+
+type MyTypeWithUnmarshalText struct {
+	uuid string
+}
+
+func (s *MyTypeWithUnmarshalText) UnmarshalText(b []byte) error {
+	str := string(b)
+	if str == "" {
+		return errors.New("empty string")
+	}
+	_, err := uuid.Parse(str)
+	if err != nil {
+		return errors.New("invalid uuid")
+	}
+	s.uuid = str
+	return nil
+}
+
 // go test -v -count=1 -timeout 60s -run ^TestBind$ ./server
 func TestBind(t *testing.T) {
 	resetSetting()
 
 	t.Run("成功: JSONリクエスト", func(t *testing.T) {
 		type testStruct struct {
-			Field1 string    `json:"field1"`
-			Field2 int       `json:"field2"`
-			Field3 *string   `json:"field3"`
-			Field4 *int      `json:"field4"`
-			Field5 time.Time `json:"field5"`
-			Field6 uuid.UUID `json:"field6"`
+			Field1 string                  `json:"field1"`
+			Field2 int                     `json:"field2"`
+			Field3 *string                 `json:"field3"`
+			Field4 *int                    `json:"field4"`
+			Field5 time.Time               `json:"field5"`
+			Field6 uuid.UUID               `json:"field6"`
+			Field7 MyTypeWithUnmarshal     `json:"field7"`
+			Field8 *MyTypeWithUnmarshal    `json:"field8"`
+			Field9 MyTypeWithUnmarshalText `json:"field9"`
 		}
 
 		body := `{
@@ -327,7 +368,10 @@ func TestBind(t *testing.T) {
 			"field3": "optional string",
 			"field4": 456,
 			"field5": "2006-01-02T15:04:05.000000Z",
-			"field6": "00000000-0000-0000-0000-000000000000"
+			"field6": "00000000-0000-0000-0000-000000000000",
+			"field7": "0976b7cd-988b-45a7-a48a-af527c1ed9e3",
+			"field8": "0976b7cd-988b-45a7-a48a-af527c1ed9e3",
+			"field9": "0976b7cd-988b-45a7-a48a-af527c1ed9e3"
 		}`
 
 		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
@@ -345,6 +389,9 @@ func TestBind(t *testing.T) {
 		testutil.AssertEqual(t, *result.Field4, 456)
 		testutil.AssertEqual(t, result.Field5.String(), "2006-01-02 15:04:05 +0000 UTC")
 		testutil.AssertEqual(t, result.Field6.String(), "00000000-0000-0000-0000-000000000000")
+		testutil.AssertEqual(t, result.Field7.uuid, "0976b7cd-988b-45a7-a48a-af527c1ed9e3")
+		testutil.AssertEqual(t, result.Field8.uuid, "0976b7cd-988b-45a7-a48a-af527c1ed9e3")
+		testutil.AssertEqual(t, result.Field9.uuid, "0976b7cd-988b-45a7-a48a-af527c1ed9e3")
 	})
 
 	t.Run("成功: クエリーパラメータ", func(t *testing.T) {
@@ -368,7 +415,7 @@ func TestBind(t *testing.T) {
 		testutil.AssertEqual(t, result.Field3, (*string)(nil))
 	})
 
-	t.Run("成功: パスパラメータ", func(t *testing.T) {
+	t.Run("成功: パスパラメータ(int)", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test/123", nil)
 		ctx := context.WithValue(req.Context(), contextKey{Key: "pathParam"}, pathParamTable{"id": "123"})
 		req = req.WithContext(ctx)
@@ -382,6 +429,54 @@ func TestBind(t *testing.T) {
 		}
 
 		testutil.AssertEqual(t, result.ID, 123)
+	})
+
+	t.Run("成功: パスパラメータ(UUID)", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test/0976b7cd-988b-45a7-a48a-af527c1ed9e3", nil)
+		ctx := context.WithValue(req.Context(), contextKey{Key: "pathParam"}, pathParamTable{"id": "0976b7cd-988b-45a7-a48a-af527c1ed9e3"})
+		req = req.WithContext(ctx)
+
+		var result struct {
+			ID uuid.UUID `param:"id"`
+		}
+		err := Bind(req, &result)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		testutil.AssertEqual(t, result.ID.String(), "0976b7cd-988b-45a7-a48a-af527c1ed9e3")
+	})
+
+	t.Run("成功: パスパラメータ(独自型でUnmarshalTextを実装)", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test/0976b7cd-988b-45a7-a48a-af527c1ed9e3", nil)
+		ctx := context.WithValue(req.Context(), contextKey{Key: "pathParam"}, pathParamTable{"id": "0976b7cd-988b-45a7-a48a-af527c1ed9e3"})
+		req = req.WithContext(ctx)
+
+		var result struct {
+			ID MyTypeWithUnmarshalText `param:"id"`
+		}
+		err := Bind(req, &result)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		testutil.AssertEqual(t, result.ID.uuid, "0976b7cd-988b-45a7-a48a-af527c1ed9e3")
+	})
+
+	t.Run("成功: パスパラメータ(独自型でUnmarshalを実装)", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test/\"0976b7cd-988b-45a7-a48a-af527c1ed9e3\"", nil)
+		ctx := context.WithValue(req.Context(), contextKey{Key: "pathParam"}, pathParamTable{"id": "\"0976b7cd-988b-45a7-a48a-af527c1ed9e3\""})
+		req = req.WithContext(ctx)
+
+		var result struct {
+			ID MyTypeWithUnmarshal `param:"id"`
+		}
+		err := Bind(req, &result)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		testutil.AssertEqual(t, result.ID.uuid, "0976b7cd-988b-45a7-a48a-af527c1ed9e3")
 	})
 
 	t.Run("成功: フォームリクエスト", func(t *testing.T) {
