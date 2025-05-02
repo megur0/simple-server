@@ -60,7 +60,7 @@ type ErrRequestFieldFormat struct {
 }
 
 func (e *ErrRequestFieldFormat) Error() string {
-	return fmt.Sprintf("field invalid:%s, field:%s", e.Err.Error(), e.Field)
+	return fmt.Sprintf("field %s: %s", e.Field, e.Err.Error())
 }
 
 func (e *ErrRequestFieldFormat) Unwrap() error {
@@ -68,7 +68,7 @@ func (e *ErrRequestFieldFormat) Unwrap() error {
 }
 
 type ErrRequestFormParse struct {
-	Err   error
+	Err error
 }
 
 func (e *ErrRequestFormParse) Error() string {
