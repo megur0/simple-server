@@ -78,3 +78,15 @@ func main() {
 			* たとえばクエリーであれば「https://example.com/?hoge=&fuga=a」といったケース
 			* この場合は空文字から指定された型へ変換される
 			* 空文字を受け付けない型の場合は変換エラーとなる
+## 各エラーの内容
+* server.ErrBind
+	* フォーマットに関するエラーはserver.ErrBindにラップされる
+* server.ErrRequestJsonSyntaxError
+	* Json自体のシンタックスエラーはErrRequestJsonSyntaxErrorにラップされる
+	* json.SyntaxErrorはこれにラップされる
+* server.ErrRequestFieldFormat
+	* 個別のフィールドの型が異なる場合のエラー
+	* json.UnmarshalTypeErrorこれにラップされる
+* server.ErrRequestJsonSomethingInvalid
+	* 上記以外、あるいは特定が面倒なケースはErrRequestJsonSomethingInvalidになる。
+	* tpパッケージのパースエラーはこれにラップされる
